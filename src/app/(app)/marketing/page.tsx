@@ -3,7 +3,8 @@ import { supabaseServer } from "@/lib/supabase/server";
 import { ghs, ghsShort, fmtDate, todayAccra, addDays, titleise } from "@/lib/format";
 import { Card, Empty, PageHead, Kpi, ErrorNote, Field } from "@/components/ui";
 import { ga4ReadConfigured, ga4SendConfigured } from "@/lib/ga4";
-import { syncGa4, recordSpend, setChannelMap } from "./actions";
+import { windsorConfigured } from "@/lib/windsor";
+import { syncGa4, recordSpend, setChannelMap, setFxRate } from "./actions";
 
 export const dynamic = "force-dynamic";
 
@@ -25,7 +26,7 @@ export default async function MarketingPage({
 
   const [{ data: perf }, { data: settings }, { data: sources }, { data: map }] = await Promise.all([
     supabase.from("marketing_performance").select("*").gte("day", from).order("day", { ascending: false }),
-    supabase.from("settings").select("ga4_property_id, ga4_measurement_id, ga4_last_sync_at").eq("id", true).maybeSingle(),
+    supabase.from("settings").select("ga4_property_id, ga4_measurement_id, ga4_last_sync_at, ads_last_sync_at, ads_usd_ghs_rate").eq("id", true).maybeSingle(),
     supabase.from("lookup_value").select("value, label").eq("kind", "lead_source").order("sort_order"),
     supabase.from("ga4_channel_map").select("*").order("ga4_channel"),
   ]);
@@ -48,6 +49,7 @@ export default async function MarketingPage({
     byChannel.set(r.channel, acc);
   }
   const channels = [...byChannel.values()].sort((a, b) => b.booked - a.booked || b.enquiries - a.enquiries);
+  const days = [...new Set(rows.map((r) => r.day))];
 
   const totalSpend = channels.reduce((t, c) => t + c.spend_pesewas, 0);
   const totalBooked = channels.reduce((t, c) => t + c.booked, 0);
@@ -77,22 +79,22 @@ export default async function MarketingPage({
         />
       </div>
 
-      {!ga4ReadConfigured() && (
-        <div className="alert warn" style={{ marginBottom: 14 }}>
+      {!ga4ReadConfigured() && !windsorConfigured() && (
+        <div className="alert" style={{ marginBottom: 14 }}>
           <span aria-hidden="true">◔</span>
           <span>
-            <b>GA4 is not connected yet.</b> The columns below still work from
-            your own enquiry and spend records — the session and rate columns
-            stay empty until the property id and service account are set in
-            Vercel. Everything else on this page is live.
+            Traffic and ad spend are refreshed by a scheduled sync rather than
+            from inside the app, so the <b>Sync GA4</b> button is hidden. The
+            figures below are real; they update once a day. Setting the GA4
+            service account in Vercel adds the on-demand button as well.
           </span>
         </div>
       )}
 
       <Card
-        title="By channel"
+        title={`By channel — ${window} days totalled`}
         action={
-          isOwner && ga4ReadConfigured() ? (
+          isOwner && (ga4ReadConfigured() || windsorConfigured()) ? (
             <form action={syncGa4} className="row" style={{ gap: 6 }}>
               <input type="hidden" name="days" value={window} />
               <button className="btn" type="submit">Sync GA4</button>
@@ -140,6 +142,38 @@ export default async function MarketingPage({
         </div>
       </Card>
 
+      <Card
+        title="Day by day"
+        action={<span className="note">{days.length} days with activity</span>}
+        pad={false}
+      >
+        <div className="tablewrap" style={{ maxHeight: 420, overflowY: "auto" }}>
+          <table>
+            <thead><tr>
+              <th>Day</th><th>Channel</th>
+              <th className="r">Sessions</th><th className="r">Clicks</th>
+              <th className="r">Spend</th><th className="r">Enquiries</th><th className="r">Booked</th>
+            </tr></thead>
+            <tbody>
+              {rows.map((r, i) => (
+                <tr key={`${r.day}-${r.channel}-${i}`}>
+                  <td className="mono">{fmtDate(r.day)}</td>
+                  <td>{titleise(r.channel.replace(/_/g, " "))}</td>
+                  <td className="r num">{r.sessions || "—"}</td>
+                  <td className="r num">{r.clicks || "—"}</td>
+                  <td className="r num">{r.spend_pesewas ? ghs(r.spend_pesewas) : "—"}</td>
+                  <td className="r num">{r.enquiries || "—"}</td>
+                  <td className="r num">{r.booked || "—"}</td>
+                </tr>
+              ))}
+              {!rows.length && (
+                <tr><td colSpan={7}><Empty title="No activity in this period" /></td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+
       <div className="cols" style={{ marginTop: 14 }}>
         <Card title="Record spend">
           <form action={recordSpend}>
@@ -174,22 +208,43 @@ export default async function MarketingPage({
         {isOwner && (
           <Card title="GA4 connection">
             <dl className="meta">
-              <dt>Read traffic</dt>
-              <dd>{ga4ReadConfigured()
-                ? <span style={{ color: "var(--ok)" }}>Connected</span>
-                : "Not configured — set GA4_PROPERTY_ID, GA4_SA_CLIENT_EMAIL and GA4_SA_PRIVATE_KEY in Vercel."}</dd>
-              <dt>Send bookings</dt>
-              <dd>{ga4SendConfigured()
-                ? <span style={{ color: "var(--ok)" }}>Connected</span>
-                : "Not configured — set GA4_MEASUREMENT_ID and GA4_API_SECRET in Vercel."}</dd>
-              <dt>Last sync</dt>
+              <dt>GA4 property</dt>
+              <dd className="mono">{settings?.ga4_property_id || "Not set"}</dd>
+              <dt>Traffic last synced</dt>
               <dd>{settings?.ga4_last_sync_at ? fmtDate(settings.ga4_last_sync_at) : "Never"}</dd>
+              <dt>Ad spend last synced</dt>
+              <dd>{settings?.ads_last_sync_at ? fmtDate(settings.ads_last_sync_at) : "Never"}</dd>
+              <dt>Connection</dt>
+              <dd>{ga4ReadConfigured()
+                ? <span style={{ color: "var(--ok)" }}>Google, directly</span>
+                : windsorConfigured()
+                ? <span style={{ color: "var(--ok)" }}>Via Windsor</span>
+                : "Scheduled sync only — no key set"}</dd>
+              <dt>Send bookings to GA4</dt>
+              <dd>{ga4SendConfigured()
+                ? <span style={{ color: "var(--ok)" }}>On</span>
+                : "Off — needs GA4_MEASUREMENT_ID and GA4_API_SECRET in Vercel."}</dd>
             </dl>
             <p className="note" style={{ marginTop: 10 }}>
-              Traffic is stored one day at a time and a re-sync replaces the
-              days it covers, so running it twice is safe. Today is deliberately
-              excluded — GA4 keeps adjusting the current day for hours.
+              A sync replaces the days it covers rather than adding to them, so
+              running it twice is safe. Today is deliberately excluded &mdash;
+              GA4 keeps restating the current day for hours.
             </p>
+
+            <h4 style={{ marginTop: 16, marginBottom: 6, fontSize: 12.5 }}>Exchange rate</h4>
+            <p className="note" style={{ marginTop: 0 }}>
+              Google Ads bills in <b>USD</b> and this CRM reports in GHS. Spend
+              is converted on the way in. Changing this affects imports from now
+              on; rows already stored keep the rate they were converted at, so
+              a correction today never restates what a past month cost.
+            </p>
+            <form action={setFxRate} className="row" style={{ gap: 6 }}>
+              <span className="note mono">1 USD =</span>
+              <input className="inp num" name="ads_usd_ghs_rate" type="number" step="0.0001" min="0"
+                     defaultValue={settings?.ads_usd_ghs_rate ?? 11.39} style={{ maxWidth: 110 }} />
+              <span className="note mono">GHS</span>
+              <button className="btn" type="submit">Set</button>
+            </form>
 
             <h4 style={{ marginTop: 16, marginBottom: 6, fontSize: 12.5 }}>Channel names</h4>
             <p className="note" style={{ marginTop: 0 }}>
