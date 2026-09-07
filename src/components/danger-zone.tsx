@@ -73,7 +73,8 @@ export function DeleteRowButton({
         aria-label={`Type DELETE to remove this ${label}`}
         style={{ maxWidth: 92, fontSize: 11.5, padding: "4px 6px" }}
       />
-      <button className="btn" type="submit" style={{ color: "var(--bad)", padding: "4px 8px" }}>
+      <button className="btn" type="submit" aria-label={`Delete ${label}`}
+              style={{ color: "var(--bad)", padding: "4px 8px" }}>
         Delete
       </button>
     </form>

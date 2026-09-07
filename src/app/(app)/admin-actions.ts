@@ -23,11 +23,27 @@ const DELETABLE: Record<string, { label: string; back: string; revalidate: strin
   client:          { label: "client",   back: "/clients",   revalidate: ["/clients"] },
   partner:         { label: "partner",  back: "/partners",  revalidate: ["/partners"] },
   therapist:       { label: "therapist", back: "/therapists", revalidate: ["/therapists"] },
-  payment:         { label: "payment",  back: "",           revalidate: ["/finance", "/bookings"] },
+  payment:         { label: "payment",  back: "",           revalidate: ["/finance", "/bookings", "/clients", "/partners", "/"] },
   expense:         { label: "expense",  back: "",           revalidate: ["/finance"] },
   task:            { label: "task",     back: "",           revalidate: ["/tasks"] },
   marketing_daily: { label: "marketing entry", back: "",    revalidate: ["/finance"] },
 };
+
+/** Preserve filters when returning to a payment list, always within this app. */
+function resultUrl(path: string, key: "error" | "deleted", message: string) {
+  const base = "https://crm.local";
+  let url: URL;
+  try {
+    url = new URL(path, base);
+  } catch {
+    url = new URL("/", base);
+  }
+  if (url.origin !== base || url.pathname.startsWith("//")) url = new URL("/", base);
+  url.searchParams.delete("error");
+  url.searchParams.delete("deleted");
+  url.searchParams.set(key, message);
+  return `${url.pathname}${url.search}`;
+}
 
 /**
  * Turn a Postgres refusal into something an owner can act on.
@@ -68,24 +84,38 @@ export async function deleteRecord(formData: FormData) {
 
   const table = s(formData, "table");
   const id = s(formData, "id");
-  const target = DELETABLE[table];
+  const target = Object.hasOwn(DELETABLE, table) ? DELETABLE[table] : undefined;
   const from = s(formData, "from") || target?.back || "/";
 
   if (!target) redirect(`/?error=${encodeURIComponent("That kind of record cannot be deleted here.")}`);
-  if (!id) redirect(`${from}?error=${encodeURIComponent("Nothing was selected to delete.")}`);
+  if (!id) redirect(resultUrl(from, "error", "Nothing was selected to delete."));
 
   // Typing the word is the whole safeguard on an irreversible action, so it is
   // checked on the server: a disabled button in the browser is not a control.
   if (s(formData, "confirm").toUpperCase() !== "DELETE") {
-    redirect(`${from}?error=${encodeURIComponent(`Type DELETE to confirm removing this ${target.label}.`)}`);
+    redirect(resultUrl(from, "error", `Type DELETE to confirm removing this ${target.label}.`));
   }
 
   const supabase = supabaseServer();
-  const { error } = await supabase.from(table).delete().eq("id", id);
+  // Returning the removed row distinguishes a real deletion from an RLS-filtered
+  // or already-deleted row, and gives us the related pages to refresh.
+  const { data: removed, error } = await supabase.from(table).delete().eq("id", id)
+    .select(table === "payment" ? "id, booking_id, client_id" : "id").maybeSingle();
   if (error) {
-    redirect(`${from}?error=${encodeURIComponent(explain(error.code, error.message, target.label))}`);
+    redirect(resultUrl(from, "error", explain(error.code, error.message, target.label)));
+  }
+  if (!removed) {
+    redirect(resultUrl(from, "error", `This ${target.label} was not found or could not be deleted. Refresh the page and try again.`));
+  }
+
+  if (table === "payment" && "booking_id" in removed && "client_id" in removed) {
+    // The existing payment trigger recalculates payment status; reporting views
+    // derive the collected amounts and balances from the remaining payments.
+    revalidatePath(`/bookings/${removed.booking_id}`);
+    revalidatePath(`/clients/${removed.client_id}`);
+    revalidatePath("/partners/[id]", "page");
   }
 
   for (const path of target.revalidate) revalidatePath(path);
-  redirect(`${target.back || from}?deleted=${encodeURIComponent(target.label)}`);
+  redirect(resultUrl(target.back || from, "deleted", target.label));
 }

@@ -11,13 +11,13 @@ import {
   type BookingView, type Therapist, type Availability,
 } from "@/lib/types";
 import { setBookingStatus, assignTherapist, recordPayment, rescheduleBooking } from "../actions";
-import { DangerZone } from "@/components/danger-zone";
+import { DangerZone, DeleteRowButton } from "@/components/danger-zone";
 
 export const dynamic = "force-dynamic";
 
 export default async function BookingDetail({
   params, searchParams,
-}: { params: { id: string }; searchParams: { error?: string; warn?: string; pending?: string } }) {
+}: { params: { id: string }; searchParams: { error?: string; warn?: string; pending?: string; deleted?: string } }) {
   const user = await requireUser();
   const supabase = supabaseServer();
 
@@ -75,6 +75,9 @@ export default async function BookingDetail({
         actions={<Link className="btn" href="/bookings">Back</Link>}
       />
       <ErrorNote message={searchParams.error} />
+      {searchParams.deleted === "payment" && (
+        <p className="alert ok" role="status">Payment deleted. Totals have been updated.</p>
+      )}
 
       {searchParams.warn && searchParams.pending && (
         <div className="alert warn" style={{ marginBottom: 12 }}>
@@ -238,7 +241,9 @@ export default async function BookingDetail({
           <div className="tablewrap" style={{ marginTop: 12 }}>
             {payments?.length ? (
               <table>
-                <thead><tr><th>Ref</th><th>Type</th><th>Method</th><th>When</th><th className="r">Amount</th></tr></thead>
+                <thead><tr><th>Ref</th><th>Type</th><th>Method</th><th>When</th><th className="r">Amount</th>
+                  {user.role === "owner" && <th className="r">Test payment</th>}
+                </tr></thead>
                 <tbody>
                   {payments.map((p) => (
                     <tr key={p.id}>
@@ -249,12 +254,24 @@ export default async function BookingDetail({
                       <td className="r num" style={{ color: p.amount_pesewas < 0 ? "var(--bad)" : undefined }}>
                         {ghs(p.amount_pesewas)}
                       </td>
+                      {user.role === "owner" && (
+                        <td>
+                          <DeleteRowButton table="payment" id={p.id}
+                            label={`test payment ${p.ref}`} from={`/bookings/${b.id}`} />
+                        </td>
+                      )}
                     </tr>
                   ))}
                 </tbody>
               </table>
             ) : <Empty title="No payments yet">Record the deposit when the client sends it.</Empty>}
           </div>
+          {user.role === "owner" && Boolean(payments?.length) && (
+            <p className="note" style={{ marginTop: 8 }}>
+              To remove a test payment, type DELETE beside its row. This permanently
+              removes the record; it does not send a refund.
+            </p>
+          )}
           <p className="note" style={{ marginTop: 8 }}>
             No card details are stored. Amounts, methods and the provider&rsquo;s reference only.
           </p>

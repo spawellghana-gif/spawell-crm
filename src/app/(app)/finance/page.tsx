@@ -2,19 +2,21 @@ import Link from "next/link";
 import { requireRole } from "@/lib/auth";
 import { supabaseServer } from "@/lib/supabase/server";
 import { ghs, ghsShort, fmtDate, todayAccra, addDays, titleise } from "@/lib/format";
-import { Card, Empty, PageHead, Kpi } from "@/components/ui";
+import { Card, Empty, PageHead, Kpi, ErrorNote } from "@/components/ui";
+import { DeleteRowButton } from "@/components/danger-zone";
 import type { BookingView } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
 export default async function FinancePage({
   searchParams,
-}: { searchParams: { from?: string; to?: string } }) {
-  await requireRole("owner", "officer");
+}: { searchParams: { from?: string; to?: string; error?: string; deleted?: string } }) {
+  const user = await requireRole("owner", "officer");
   const supabase = supabaseServer();
   const today = todayAccra();
   const from = searchParams.from ?? addDays(today, -29);
   const to = searchParams.to ?? today;
+  const paymentReturn = `/finance?${new URLSearchParams({ from, to })}`;
 
   const [{ data: payments }, { data: expenses }, { data: owing }] = await Promise.all([
     supabase.from("payment").select("*")
@@ -23,7 +25,8 @@ export default async function FinancePage({
     supabase.from("expense").select("*").gte("spent_on", from).lte("spent_on", to)
       .order("spent_on", { ascending: false }),
     supabase.from("booking_view").select("*").gt("balance_pesewas", 0)
-      .in("status", ["confirmed", "therapist_assigned", "en_route", "arrived", "in_service", "completed"])
+      // Removing a test payment can leave a previously paid booking owing again.
+      .in("status", ["confirmed", "therapist_assigned", "en_route", "arrived", "in_service", "completed", "paid"])
       .order("starts_at"),
   ]);
 
@@ -47,6 +50,10 @@ export default async function FinancePage({
           </form>
         }
       />
+      <ErrorNote message={searchParams.error} />
+      {searchParams.deleted === "payment" && (
+        <p className="alert ok" role="status">Payment deleted. Totals have been updated.</p>
+      )}
 
       <div className="kpis" style={{ marginBottom: 14 }}>
         <Kpi label="Collected" value={ghsShort(collected)} detail="net of refunds" />
@@ -57,10 +64,18 @@ export default async function FinancePage({
 
       <div className="cols">
         <Card title="Payments received" pad={false}>
+          {user.role === "owner" && Boolean(payments?.length) && (
+            <p className="note" style={{ margin: "12px 16px" }}>
+              To remove a test payment, type DELETE beside its row. This permanently
+              removes the record; it does not send a refund.
+            </p>
+          )}
           <div className="tablewrap">
             {payments?.length ? (
               <table>
-                <thead><tr><th>Ref</th><th>Type</th><th>Method</th><th>When</th><th className="r">Amount</th></tr></thead>
+                <thead><tr><th>Ref</th><th>Type</th><th>Method</th><th>When</th><th className="r">Amount</th>
+                  {user.role === "owner" && <th className="r">Test payment</th>}
+                </tr></thead>
                 <tbody>
                   {payments.map((p) => (
                     <tr key={p.id}>
@@ -71,6 +86,12 @@ export default async function FinancePage({
                       <td className="r num" style={{ color: p.amount_pesewas < 0 ? "var(--bad)" : undefined }}>
                         {ghs(p.amount_pesewas)}
                       </td>
+                      {user.role === "owner" && (
+                        <td>
+                          <DeleteRowButton table="payment" id={p.id}
+                            label={`test payment ${p.ref}`} from={paymentReturn} />
+                        </td>
+                      )}
                     </tr>
                   ))}
                 </tbody>
