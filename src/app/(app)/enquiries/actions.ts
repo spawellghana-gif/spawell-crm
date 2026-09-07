@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { supabaseServer } from "@/lib/supabase/server";
 import { requireUser } from "@/lib/auth";
 import { normalisePhone, toPesewas } from "@/lib/format";
+import { sendBookingToGa4, ga4SendConfigured } from "@/lib/ga4";
 
 const s = (fd: FormData, k: string) => String(fd.get(k) ?? "").trim();
 
@@ -155,7 +156,29 @@ export async function convertToBooking(formData: FormData) {
     .select("id, ref").single();
   if (bErr) redirect(`/enquiries/${enquiryId}?error=${encodeURIComponent(bErr.message)}`);
 
-  // 3. close the loop on the enquiry
+  // 3. tell GA4 the enquiry turned into money.
+  //
+  // Deliberately not awaited into the redirect path in a way that can fail the
+  // conversion: a booking must never be lost because Google was slow. The
+  // timestamp records that it was reported, so a later retry cannot
+  // double-count the revenue.
+  if (ga4SendConfigured()) {
+    const { data: svc } = await supabase
+      .from("service").select("name").eq("id", e.service_id).maybeSingle();
+    const sent = await sendBookingToGa4({
+      clientId: e.ga_client_id ?? "",
+      sessionId: e.ga_session_id || undefined,
+      bookingRef: booking!.ref,
+      valuePesewas: base + transport,
+      serviceName: svc?.name ?? "Massage",
+    });
+    if (sent.ok) {
+      await supabase.from("booking")
+        .update({ ga4_reported_at: new Date().toISOString() }).eq("id", booking!.id);
+    }
+  }
+
+  // 4. close the loop on the enquiry
   await supabase.from("enquiry")
     .update({ status: "booked", booking_id: booking!.id, client_id: clientId, follow_up_at: null })
     .eq("id", e.id);

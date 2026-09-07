@@ -11,6 +11,7 @@ import {
   type BookingView, type Therapist, type Availability,
 } from "@/lib/types";
 import { setBookingStatus, assignTherapist, recordPayment, rescheduleBooking } from "../actions";
+import { DangerZone } from "@/components/danger-zone";
 
 export const dynamic = "force-dynamic";
 
@@ -287,6 +288,17 @@ export default async function BookingDetail({
           ) : <Empty title="Nothing logged yet" />}
         </Card>
       </div>
+
+      {user.role === "owner" && (
+        <DangerZone table="booking" id={b.id} label="booking"
+                    from={`/bookings/${b.id}`}
+                    warning={"Cancelling is almost always the better move — it keeps the job in the record with a reason attached."}>
+          Removes {b.ref} along with its status history and therapist
+          assignment. If any payment has been recorded against it the database
+          will refuse, because deleting it would change what the month
+          collected.
+        </DangerZone>
+      )}
     </>
   );
 }

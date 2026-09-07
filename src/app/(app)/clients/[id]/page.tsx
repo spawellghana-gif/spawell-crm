@@ -3,13 +3,16 @@ import { notFound } from "next/navigation";
 import { requireRole } from "@/lib/auth";
 import { supabaseServer } from "@/lib/supabase/server";
 import { ghs, ghsShort, prettyPhone, fmtDate, fmtDateTime, waLink, titleise } from "@/lib/format";
-import { Card, Empty, PageHead, Kpi, BookingChip, Chip } from "@/components/ui";
+import { Card, Empty, PageHead, Kpi, BookingChip, Chip, ErrorNote } from "@/components/ui";
+import { DangerZone } from "@/components/danger-zone";
 import type { BookingView } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
-export default async function ClientDetail({ params }: { params: { id: string } }) {
-  await requireRole("owner", "officer");
+export default async function ClientDetail({
+  params, searchParams,
+}: { params: { id: string }; searchParams: { error?: string } }) {
+  const user = await requireRole("owner", "officer");
   const supabase = supabaseServer();
 
   const { data: c } = await supabase.from("client_view").select("*").eq("id", params.id).maybeSingle();
@@ -34,6 +37,7 @@ export default async function ClientDetail({ params }: { params: { id: string } 
           </>
         }
       />
+      <ErrorNote message={searchParams.error} />
       <div className="kpis" style={{ marginBottom: 14 }}>
         <Kpi label="Completed bookings" value={c.completed_bookings} />
         <Kpi label="Lifetime collected" value={ghsShort(c.lifetime_collected_pesewas)} />
@@ -94,6 +98,15 @@ export default async function ClientDetail({ params }: { params: { id: string } 
           ) : <Empty title="No enquiries on file" />}
         </Card>
       </div>
+
+      {user.role === "owner" && (
+        <DangerZone table="client" id={c.id} label="client"
+                    from={`/clients/${c.id}`}>
+          Erases this person and everything you know about them. If they have
+          bookings the database will refuse — delete those first, or leave the
+          client in place, which is usually the right call.
+        </DangerZone>
+      )}
     </>
   );
 }

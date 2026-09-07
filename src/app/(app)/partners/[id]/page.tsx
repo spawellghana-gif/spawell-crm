@@ -6,6 +6,7 @@ import { ghs, ghsShort, prettyPhone, fmtDate, fmtDateTime, waLink, titleise } fr
 import { Card, Empty, PageHead, Kpi, Chip, ErrorNote, BookingChip } from "@/components/ui";
 import type { BookingView } from "@/lib/types";
 import { recordPartnerPayout, logPartnerEvent, archivePartner } from "../actions";
+import { DangerZone } from "@/components/danger-zone";
 
 export const dynamic = "force-dynamic";
 
@@ -170,6 +171,17 @@ export default async function PartnerDetail({
           </form>
         </Card>
         </div>
+      )}
+
+      {user.role === "owner" && (
+        <DangerZone table="partner" id={partner.id} label="partner"
+                    from={`/partners/${partner.id}`}
+                    warning={"Archiving above does what you usually want. Delete only a partner added by mistake."}>
+          Erases {partner.name} and the whole relationship log. Their referred
+          bookings and any commission you already paid stay, but detach from
+          them &mdash; so this partner disappears from your commission figures
+          entirely, past months included.
+        </DangerZone>
       )}
     </>
   );

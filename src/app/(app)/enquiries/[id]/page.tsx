@@ -8,13 +8,14 @@ import {
 import { Card, Field, PageHead, EnquiryChip, Empty, ErrorNote, Chip } from "@/components/ui";
 import { ENQUIRY_LABEL, type EnquiryView, type EnquiryStatus } from "@/lib/types";
 import { logEvent, setEnquiryStatus, convertToBooking } from "../actions";
+import { DangerZone } from "@/components/danger-zone";
 
 export const dynamic = "force-dynamic";
 
 export default async function EnquiryDetail({
   params, searchParams,
 }: { params: { id: string }; searchParams: { error?: string } }) {
-  await requireRole("owner", "officer");
+  const user = await requireRole("owner", "officer");
   const supabase = supabaseServer();
 
   const { data: enquiry } = await supabase
@@ -195,6 +196,15 @@ export default async function EnquiryDetail({
           )}
         </Card>
       </div>
+
+      {user.role === "owner" && (
+        <DangerZone table="enquiry" id={enquiry.id} label="enquiry"
+                    from={`/enquiries/${enquiry.id}`}>
+          Removes the enquiry and its whole conversation log. Any booking that
+          came from it survives, but loses the record of where it came from —
+          so your channel and partner figures shift.
+        </DangerZone>
+      )}
     </>
   );
 }
