@@ -2,7 +2,7 @@ import Link from "next/link";
 import { requireRole } from "@/lib/auth";
 import { supabaseServer } from "@/lib/supabase/server";
 import { ghsShort, titleise } from "@/lib/format";
-import { Card, Empty, PageHead, Kpi, Chip } from "@/components/ui";
+import { Card, Empty, PageHead, Kpi, Chip, ErrorNote } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
 
@@ -10,7 +10,9 @@ const STATUS_TONE: Record<string, string> = {
   active: "ok", in_discussion: "info", paused: "warn", ended: "bad",
 };
 
-export default async function PartnersPage() {
+export default async function PartnersPage({
+  searchParams,
+}: { searchParams: { error?: string } }) {
   await requireRole("owner", "officer");
   const supabase = supabaseServer();
   const { data } = await supabase.from("partner_ledger").select("*").order("name");
@@ -23,7 +25,9 @@ export default async function PartnersPage() {
       <PageHead
         title="Partners"
         blurb="Hotels, corporates, estate agencies and individual referrers, with commission earned and still owed."
+        actions={<Link className="btn pri" href="/partners/new">Add partner</Link>}
       />
+      <ErrorNote message={searchParams.error} />
       <div className="kpis" style={{ marginBottom: 14 }}>
         <Kpi label="Active partners" value={rows.filter((p) => p.status === "active").length} />
         <Kpi label="Collected via partners" value={ghsShort(collected)} />
@@ -54,7 +58,7 @@ export default async function PartnersPage() {
                   </td>
                 </tr>
               ))}
-              {!rows.length && <tr><td colSpan={8}><Empty title="No partners yet">Add hotels and referrers in Supabase, or extend this page with a form.</Empty></td></tr>}
+              {!rows.length && <tr><td colSpan={8}><Empty title="No partners yet">Add the hotels, agencies and individuals who send you work.</Empty></td></tr>}
             </tbody>
           </table>
         </div>

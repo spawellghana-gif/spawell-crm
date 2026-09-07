@@ -5,7 +5,7 @@ import { supabaseServer } from "@/lib/supabase/server";
 import { ghs, ghsShort, prettyPhone, fmtDate, fmtDateTime, waLink, titleise } from "@/lib/format";
 import { Card, Empty, PageHead, Kpi, Chip, ErrorNote, BookingChip } from "@/components/ui";
 import type { BookingView } from "@/lib/types";
-import { recordPartnerPayout, logPartnerEvent } from "../actions";
+import { recordPartnerPayout, logPartnerEvent, archivePartner } from "../actions";
 
 export const dynamic = "force-dynamic";
 
@@ -45,6 +45,7 @@ export default async function PartnerDetail({
                 Open in WhatsApp ↗
               </a>
             )}
+            <Link className="btn" href={`/partners/${partner.id}/edit`}>Edit</Link>
             <Link className="btn" href="/partners">Back</Link>
           </>
         }
@@ -150,6 +151,26 @@ export default async function PartnerDetail({
           ) : <Empty title="Nothing logged yet" />}
         </Card>
       </div>
+
+      {user.role === "owner" && (
+        <div style={{ marginTop: 14 }}>
+        <Card title="End this partnership">
+          <p className="note" style={{ marginTop: 0 }}>
+            Archiving hides {partner.name} from the partner list and marks the
+            agreement ended. Their past bookings, commission and payouts stay
+            exactly as they are &mdash; deleting the record would rewrite what
+            previous months earned.
+            {owed > 0 && (
+              <> There is still <b>{ghs(owed)}</b> owed; settle it above first.</>
+            )}
+          </p>
+          <form action={archivePartner}>
+            <input type="hidden" name="partner_id" value={partner.id} />
+            <button className="btn" type="submit">Archive partner</button>
+          </form>
+        </Card>
+        </div>
+      )}
     </>
   );
 }
