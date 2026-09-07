@@ -104,10 +104,11 @@ export async function fetchGa4Daily(days = 30): Promise<Ga4Result> {
     return { ok: false, reason: "GA4 is not connected yet — the property id and service account are not set." };
   }
 
-  // GA4 keeps adjusting the current day for hours. Ending yesterday means a
-  // synced number never changes under you after the fact.
-  const to = `${days === 0 ? 0 : 1}daysAgo`;
-  const from = `${days + 1}daysAgo`;
+  // Relative date ranges are inclusive. Thirty days means 30daysAgo through
+  // yesterday. Recent days can still be restated when late events arrive.
+  const window = Math.min(Math.max(Math.floor(days) || 30, 1), 365);
+  const to = "1daysAgo";
+  const from = `${window}daysAgo`;
 
   try {
     const token = await accessToken();

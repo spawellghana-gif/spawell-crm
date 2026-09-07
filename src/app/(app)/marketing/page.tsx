@@ -3,8 +3,7 @@ import { supabaseServer } from "@/lib/supabase/server";
 import { ghs, ghsShort, fmtDate, todayAccra, addDays, titleise } from "@/lib/format";
 import { Card, Empty, PageHead, Kpi, ErrorNote, Field } from "@/components/ui";
 import { ga4ReadConfigured, ga4SendConfigured } from "@/lib/ga4";
-import { windsorConfigured } from "@/lib/windsor";
-import { syncGa4, recordSpend, setChannelMap, setFxRate } from "./actions";
+import { syncGa4, recordSpend, setChannelMap } from "./actions";
 
 export const dynamic = "force-dynamic";
 
@@ -26,7 +25,7 @@ export default async function MarketingPage({
 
   const [{ data: perf }, { data: settings }, { data: sources }, { data: map }] = await Promise.all([
     supabase.from("marketing_performance").select("*").gte("day", from).order("day", { ascending: false }),
-    supabase.from("settings").select("ga4_property_id, ga4_measurement_id, ga4_last_sync_at, ads_last_sync_at, ads_usd_ghs_rate").eq("id", true).maybeSingle(),
+    supabase.from("settings").select("ga4_property_id, ga4_measurement_id, ga4_last_sync_at, ads_last_sync_at").eq("id", true).maybeSingle(),
     supabase.from("lookup_value").select("value, label").eq("kind", "lead_source").order("sort_order"),
     supabase.from("ga4_channel_map").select("*").order("ga4_channel"),
   ]);
@@ -79,14 +78,13 @@ export default async function MarketingPage({
         />
       </div>
 
-      {!ga4ReadConfigured() && !windsorConfigured() && (
+      {!ga4ReadConfigured() && (
         <div className="alert" style={{ marginBottom: 14 }}>
           <span aria-hidden="true">◔</span>
           <span>
-            Traffic and ad spend are refreshed by a scheduled sync rather than
-            from inside the app, so the <b>Sync GA4</b> button is hidden. The
-            figures below are real; they update once a day. Setting the GA4
-            service account in Vercel adds the on-demand button as well.
+            <b>Google Analytics is not connected yet.</b> Configure a Google
+            service account with Viewer access to refresh website traffic
+            directly from your GA4 property.
           </span>
         </div>
       )}
@@ -94,7 +92,7 @@ export default async function MarketingPage({
       <Card
         title={`By channel — ${window} days totalled`}
         action={
-          isOwner && (ga4ReadConfigured() || windsorConfigured()) ? (
+          isOwner && ga4ReadConfigured() ? (
             <form action={syncGa4} className="row" style={{ gap: 6 }}>
               <input type="hidden" name="days" value={window} />
               <button className="btn" type="submit">Sync GA4</button>
@@ -206,45 +204,28 @@ export default async function MarketingPage({
         </Card>
 
         {isOwner && (
-          <Card title="GA4 connection">
+          <Card title="Direct GA4 connection">
             <dl className="meta">
               <dt>GA4 property</dt>
-              <dd className="mono">{settings?.ga4_property_id || "Not set"}</dd>
+              <dd className="mono">{process.env.GA4_PROPERTY_ID?.trim() || settings?.ga4_property_id || "Not set"}</dd>
               <dt>Traffic last synced</dt>
               <dd>{settings?.ga4_last_sync_at ? fmtDate(settings.ga4_last_sync_at) : "Never"}</dd>
               <dt>Ad spend last synced</dt>
               <dd>{settings?.ads_last_sync_at ? fmtDate(settings.ads_last_sync_at) : "Never"}</dd>
               <dt>Connection</dt>
               <dd>{ga4ReadConfigured()
-                ? <span style={{ color: "var(--ok)" }}>Google, directly</span>
-                : windsorConfigured()
-                ? <span style={{ color: "var(--ok)" }}>Via Windsor</span>
-                : "Scheduled sync only — no key set"}</dd>
+                ? "Google Analytics Data API — credentials configured"
+                : "Not configured — Google service-account credentials are required."}</dd>
               <dt>Send bookings to GA4</dt>
               <dd>{ga4SendConfigured()
                 ? <span style={{ color: "var(--ok)" }}>On</span>
                 : "Off — needs GA4_MEASUREMENT_ID and GA4_API_SECRET in Vercel."}</dd>
             </dl>
             <p className="note" style={{ marginTop: 10 }}>
-              A sync replaces the days it covers rather than adding to them, so
-              running it twice is safe. Today is deliberately excluded &mdash;
-              GA4 keeps restating the current day for hours.
+              Use <b>Sync GA4</b> to import website traffic directly from Google.
+              Imports replace the returned days and exclude today, while GA4
+              is still processing its activity.
             </p>
-
-            <h4 style={{ marginTop: 16, marginBottom: 6, fontSize: 12.5 }}>Exchange rate</h4>
-            <p className="note" style={{ marginTop: 0 }}>
-              Google Ads bills in <b>USD</b> and this CRM reports in GHS. Spend
-              is converted on the way in. Changing this affects imports from now
-              on; rows already stored keep the rate they were converted at, so
-              a correction today never restates what a past month cost.
-            </p>
-            <form action={setFxRate} className="row" style={{ gap: 6 }}>
-              <span className="note mono">1 USD =</span>
-              <input className="inp num" name="ads_usd_ghs_rate" type="number" step="0.0001" min="0"
-                     defaultValue={settings?.ads_usd_ghs_rate ?? 11.39} style={{ maxWidth: 110 }} />
-              <span className="note mono">GHS</span>
-              <button className="btn" type="submit">Set</button>
-            </form>
 
             <h4 style={{ marginTop: 16, marginBottom: 6, fontSize: 12.5 }}>Channel names</h4>
             <p className="note" style={{ marginTop: 0 }}>
