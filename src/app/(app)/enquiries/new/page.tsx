@@ -57,6 +57,10 @@ export default async function NewEnquiryPage({
                   {(channels ?? []).map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
                 </select>
               </Field>
+              <Field label="WhatsApp ref" name="ad_ref"
+                     hint="If their first message ends with [ref: XXXXXX], paste it — it links the booking to the ad they clicked.">
+                <input className="inp mono" id="ad_ref" name="ad_ref" placeholder="K7QP2M" autoComplete="off" />
+              </Field>
               <Field label="Lead source" name="source">
                 <select className="inp" id="source" name="source" defaultValue="direct_unknown">
                   {(sources ?? []).map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}

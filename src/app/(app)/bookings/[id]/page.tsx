@@ -12,6 +12,7 @@ import {
 } from "@/lib/types";
 import { setBookingStatus, assignTherapist, recordPayment, rescheduleBooking } from "../actions";
 import { DangerZone, DeleteRowButton } from "@/components/danger-zone";
+import { Acquisition } from "@/components/acquisition";
 
 export const dynamic = "force-dynamic";
 
@@ -25,6 +26,16 @@ export default async function BookingDetail({
     .from("booking_view").select("*").eq("id", params.id).maybeSingle();
   if (!row) notFound();
   const b = row as BookingView;
+  // Attribution and its conversion, read alongside the booking rather than
+  // inside it: a booking must still render if either returns nothing.
+  const [{ data: conversion }, { data: bookingAd }] = await Promise.all([
+    supabase.from("conversion_event")
+      .select("status, value_pesewas, dedup_key, last_attempt_at, skip_reason, revision")
+      .eq("booking_id", b.id).maybeSingle(),
+    supabase.from("booking")
+      .select("gclid, gbraid, wbraid, source, campaign")
+      .eq("id", b.id).maybeSingle(),
+  ]);
   const staff = isStaff(user.role);
 
   const [{ data: events }, { data: payments }, { data: therapists }, { data: methods }, { data: templates }, { data: lostReasons }] =
@@ -304,6 +315,19 @@ export default async function BookingDetail({
             </ul>
           ) : <Empty title="Nothing logged yet" />}
         </Card>
+      </div>
+
+      <div style={{ marginTop: 14 }}>
+        <Acquisition
+          source={bookingAd?.source}
+          campaign={bookingAd?.campaign}
+          gclid={bookingAd?.gclid}
+          gbraid={bookingAd?.gbraid}
+          wbraid={bookingAd?.wbraid}
+          status={(bookingAd?.gclid || bookingAd?.gbraid || bookingAd?.wbraid) ? "google_ads" : undefined}
+          conversion={conversion ?? null}
+          showTechnical={user.role === "owner"}
+        />
       </div>
 
       {user.role === "owner" && (

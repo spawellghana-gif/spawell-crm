@@ -6,6 +6,7 @@ import { supabaseServer } from "@/lib/supabase/server";
 import { requireUser } from "@/lib/auth";
 import { normalisePhone, toPesewas } from "@/lib/format";
 import { sendBookingToGa4, ga4SendConfigured } from "@/lib/ga4";
+import { attributionSchemaReady, claimAttribution, markClickClaimed } from "@/lib/claim-attribution";
 
 const s = (fd: FormData, k: string) => String(fd.get(k) ?? "").trim();
 
@@ -18,6 +19,16 @@ export async function createEnquiry(formData: FormData) {
   const { data: existing } = await supabase
     .from("client").select("id").eq("phone_e164", phone).maybeSingle();
 
+  // Advertising attribution, if the customer carried a ref through WhatsApp.
+  // Nothing is guessed here: an absent or unknown ref leaves the enquiry
+  // unattributed, which is the honest state.
+  const hasAttribution = await attributionSchemaReady(supabase);
+  const claimed = await claimAttribution(supabase, hasAttribution ? s(formData, "ad_ref") : "");
+  // A captured click knows the true source; an officer picking from a dropdown
+  // is guessing. Where the click says Google Ads, it wins — otherwise the
+  // officer's choice stands.
+  const { utm: claimedUtm, source: claimedSource, campaign: claimedCampaign, ...attribution } = claimed;
+
   const { data, error } = await supabase
     .from("enquiry")
     .insert({
@@ -25,8 +36,8 @@ export async function createEnquiry(formData: FormData) {
       phone_e164: phone,
       whatsapp_e164: formData.get("same_whatsapp") ? phone : normalisePhone(s(formData, "whatsapp")),
       channel: s(formData, "channel") || "whatsapp",
-      source: s(formData, "source") || "direct_unknown",
-      campaign: s(formData, "campaign"),
+      source: claimedSource || s(formData, "source") || "direct_unknown",
+      campaign: claimedCampaign || s(formData, "campaign"),
       partner_id: s(formData, "partner_id") || null,
       service_id: s(formData, "service_id") || null,
       duration_min: Number(formData.get("duration_min")) || null,
@@ -39,6 +50,7 @@ export async function createEnquiry(formData: FormData) {
       quote_pesewas: toPesewas(s(formData, "quote")),
       notes: s(formData, "notes"),
       client_id: existing?.id ?? null,
+      ...(hasAttribution ? attribution : {}),
       owner_id: user.id,
       status: "new",
     })
@@ -46,6 +58,11 @@ export async function createEnquiry(formData: FormData) {
     .single();
 
   if (error) redirect(`/enquiries/new?error=${encodeURIComponent(error.message)}`);
+
+  // Stamp the click as used, after the enquiry exists. Failing here costs the
+  // claimed flag, never the enquiry.
+  await markClickClaimed(supabase, attribution.ad_click_id, data!.id);
+
   revalidatePath("/enquiries");
   redirect(`/enquiries/${data!.id}`);
 }
@@ -150,6 +167,12 @@ export async function convertToBooking(formData: FormData) {
       location_type: e.location_type, area: e.area, address: e.address,
       landmark: e.landmark, base_pesewas: base, transport_pesewas: transport,
       source: e.source, campaign: e.campaign,
+      // Copied, not referenced: the conversion must still be correct if the
+      // enquiry is later edited or archived.
+      ...(Object.hasOwn(e, "ad_click_id") ? {
+        ad_click_id: e.ad_click_id ?? null,
+        gclid: e.gclid ?? "", gbraid: e.gbraid ?? "", wbraid: e.wbraid ?? "",
+      } : {}),
       status: "awaiting_confirmation", created_by: user.id, updated_by: user.id,
       instructions_client: "Please have a quiet room, a towel and access to water ready.",
     })

@@ -1,0 +1,94 @@
+<!--
+  SpaWellGhana — ad attribution snippet.
+
+  THIS FILE DOES NOT BELONG TO THE CRM. It goes on spawellghana.com, which is a
+  separate codebase on Hostinger. Paste it before </body> on every page.
+
+  What it does:
+    1. Reads gclid / gbraid / wbraid and UTMs from the landing URL.
+    2. Keeps the FIRST touch in localStorage — a returning visitor does not
+       overwrite the ad that originally found them.
+    3. Posts them once to the CRM and gets back a six-character ref.
+    4. Appends "[ref: XXXXXX]" to every wa.me link on the page.
+
+  What it deliberately does not do: put a gclid, a phone number or anything
+  else identifying into the WhatsApp URL. The ref is meaningless without the
+  CRM database.
+-->
+<script>
+(function () {
+  "use strict";
+
+  var CRM = "https://crm.spawellghana.com/api/attribution";
+  var STORE = "spw_attr_v1";
+  var FIELDS = ["gclid", "gbraid", "wbraid",
+                "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content"];
+
+  function read(key) {
+    try { return JSON.parse(localStorage.getItem(key) || "null"); } catch (e) { return null; }
+  }
+  function write(key, value) {
+    try { localStorage.setItem(key, JSON.stringify(value)); } catch (e) { /* private mode */ }
+  }
+
+  function fromUrl() {
+    var q = new URLSearchParams(location.search);
+    var out = {}, any = false;
+    FIELDS.forEach(function (f) {
+      var v = q.get(f);
+      if (v) { out[f] = v; any = true; }
+    });
+    if (!any) return null;
+    out.landing_page = location.pathname + location.search;
+    out.referrer = document.referrer || "";
+    return out;
+  }
+
+  function decorate(token) {
+    if (!token) return;
+    var tag = " [ref: " + token + "]";
+    document.querySelectorAll('a[href*="wa.me"], a[href*="api.whatsapp.com"]').forEach(function (a) {
+      try {
+        var url = new URL(a.href);
+        var text = url.searchParams.get("text") || "Hello SpaWellGhana, I would like to book a massage.";
+        if (text.indexOf("[ref:") !== -1) return;      // already tagged
+        url.searchParams.set("text", text + tag);
+        a.href = url.toString();
+      } catch (e) { /* leave the link exactly as it was */ }
+    });
+  }
+
+  var saved = read(STORE);
+
+  // First touch wins. A visitor who comes back through Instagram three weeks
+  // later did not stop having arrived from the ad.
+  if (saved && saved.token) {
+    decorate(saved.token);
+    return;
+  }
+
+  var click = fromUrl();
+  if (!click) return;   // organic visit — nothing to attribute, nothing sent
+
+  fetch(CRM, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(click),
+    keepalive: true
+  })
+    .then(function (r) { return r.ok && r.status !== 204 ? r.json() : null; })
+    .then(function (data) {
+      if (!data || !data.token) return;
+      write(STORE, { token: data.token, at: Date.now() });
+      decorate(data.token);
+    })
+    // Attribution failing must never break the website. Silent by design.
+    .catch(function () {});
+
+  // Late-rendered WhatsApp buttons still get tagged.
+  document.addEventListener("DOMContentLoaded", function () {
+    var s = read(STORE);
+    if (s && s.token) decorate(s.token);
+  });
+})();
+</script>

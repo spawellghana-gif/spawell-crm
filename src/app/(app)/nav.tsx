@@ -27,6 +27,7 @@ const NAV: { group: string; items: [string, string, AppRole[]][] }[] = [
     items: [
       ["/finance", "Finance", ["owner", "officer"]],
       ["/marketing", "Marketing", ["owner", "officer"]],
+      ["/marketing/google-ads", "Google Ads", ["owner", "officer"]],
     ],
   },
   {

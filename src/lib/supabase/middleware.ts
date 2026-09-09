@@ -4,6 +4,12 @@ import { SUPABASE_URL, SUPABASE_ANON_KEY } from "./config";
 
 /** Refreshes the auth cookie on every request and gates the app behind login. */
 export async function updateSession(request: NextRequest) {
+  // These endpoints enforce their own origin or bearer-token checks. A
+  // website visitor and Vercel Cron do not have a CRM sign-in session.
+  const path = request.nextUrl.pathname;
+  if (path === "/api/attribution" || path === "/api/conversions/sync") {
+    return NextResponse.next({ request });
+  }
   let response = NextResponse.next({ request });
 
   const supabase = createServerClient(
@@ -29,7 +35,6 @@ export async function updateSession(request: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser();
 
-  const path = request.nextUrl.pathname;
   const isPublic = path.startsWith("/login") || path.startsWith("/auth");
 
   if (!user && !isPublic) {

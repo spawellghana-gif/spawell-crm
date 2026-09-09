@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { supabaseServer } from "@/lib/supabase/server";
 import { requireUser } from "@/lib/auth";
+import { serviceClient, ensureConversionForBooking, voidConversionForBooking } from "@/lib/conversions";
 import { toPesewas } from "@/lib/format";
 
 const s = (fd: FormData, k: string) => String(fd.get(k) ?? "").trim();
@@ -20,19 +21,62 @@ async function note(bookingId: string, body: string) {
  * than deciding here.
  */
 export async function setBookingStatus(formData: FormData) {
+  const user = await requireUser();
   const supabase = supabaseServer();
   const id = s(formData, "booking_id");
   const status = s(formData, "status");
   const patch: Record<string, unknown> = { status };
+
   if (status === "cancelled_client" || status === "cancelled_business") {
     patch.cancel_reason = s(formData, "cancel_reason") || "other";
     patch.cancel_fee_pesewas = toPesewas(s(formData, "cancel_fee"));
   }
-  const { error } = await supabase.from("booking").update(patch).eq("id", id);
+
+  // Record who confirmed it and when. Only stamped the first time, so a later
+  // status change does not rewrite the moment the customer actually committed
+  // — which is the timestamp Google is told about.
+  const { data: before, error: readError } = await supabase
+    .from("booking").select("*").eq("id", id).maybeSingle();
+  if (readError || !before) {
+    redirect(`/bookings/${id}?error=${encodeURIComponent(readError?.message ?? "Booking not found.")}`);
+  }
+  // Older databases can keep saving bookings while migration 0010 is pending.
+  if (status === "confirmed" && Object.hasOwn(before, "confirmed_at") && !before.confirmed_at) {
+    patch.confirmed_at = new Date().toISOString();
+    patch.confirmed_by = user.id;
+  }
+
+  const { data: saved, error } = await supabase.from("booking").update(patch).eq("id", id)
+    .select("id").maybeSingle();
   if (error) redirect(`/bookings/${id}?error=${encodeURIComponent(error.message)}`);
+  if (!saved) redirect(`/bookings/${id}?error=${encodeURIComponent("Booking could not be updated.")}`);
   await note(id, `Status set to ${status.replace(/_/g, " ")}.`);
+
+  // --- advertising, strictly downstream of the booking -------------------
+  // The booking is already saved. Everything below is best-effort: a failure
+  // here must never surface as a failed confirmation, and must never leave the
+  // officer unsure whether the booking took. Hence the try/catch that swallows.
+  try {
+    const service = serviceClient();
+    if (service) {
+      if (status === "confirmed") {
+        await ensureConversionForBooking(service, id);
+      } else if (
+        before?.ref &&
+        (status === "cancelled_client" || status === "cancelled_business" || status === "no_show")
+      ) {
+        await voidConversionForBooking(service, before.ref);
+      }
+    }
+  } catch {
+    // Deliberately silent to the operator. The conversion row, or its absence,
+    // is visible on the Google Ads Attribution page, which is where a problem
+    // with advertising reporting belongs — not on top of a confirmed booking.
+  }
+
   revalidatePath(`/bookings/${id}`);
   revalidatePath("/bookings");
+  revalidatePath("/marketing/google-ads");
 }
 
 /** Assign or unassign a therapist, after checking availability in the database. */
