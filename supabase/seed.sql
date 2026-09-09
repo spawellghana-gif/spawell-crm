@@ -47,14 +47,17 @@ join (values
 ) as v(service_name, addon, price) on v.service_name = s.name
 on conflict do nothing;
 
--- ---------------------------------------------------------------- zones
+-- ------------------------------------------------------- areas covered
+-- Coverage areas for dispatch and travel planning, NOT a price list.
+-- SpaWellGhana prices are all-inclusive: travel is never charged on top, so
+-- every fee here is zero and the column exists only for history.
 insert into zone (name, transport_fee_pesewas) values
-  ('Accra Central',              6000),
-  ('Osu / Labone / Cantonments', 7000),
-  ('East Legon / Airport',       8000),
-  ('Spintex / Baatsona',         9000),
-  ('Tema',                      12000),
-  ('Kumasi Central',            15000)
+  ('Accra Central',              0),
+  ('Osu / Labone / Cantonments', 0),
+  ('East Legon / Airport',       0),
+  ('Spintex / Baatsona',         0),
+  ('Tema',                       0),
+  ('Kumasi Central',             0)
 on conflict (name) do nothing;
 
 -- ---------------------------------------------------------------- lookups

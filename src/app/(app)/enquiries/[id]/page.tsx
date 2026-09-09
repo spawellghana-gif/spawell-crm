@@ -29,7 +29,7 @@ export default async function EnquiryDetail({
       supabase.from("enquiry").select("id, ref, status").eq("phone_e164", e.phone_e164).neq("id", e.id),
       supabase.from("lookup_value").select("value, label").eq("kind", "lost_reason").order("sort_order"),
       supabase.from("message_template").select("body").eq("key", "quote").maybeSingle(),
-      supabase.from("zone").select("name, transport_fee_pesewas").order("name"),
+      supabase.from("zone").select("name").order("name"),
     ]);
 
   const quoteMessage = fillTemplate(template?.body ?? "Hello {name}, ", {
@@ -114,14 +114,10 @@ export default async function EnquiryDetail({
                   <input className="inp num" id="duration_min" name="duration_min" type="number"
                     defaultValue={e.duration_min ?? 60} min={15} step={15} />
                 </Field>
-                <Field label="Service price (GHS)" name="base"
-                  hint="Defaults to the quoted amount">
+                <Field label="Price (GHS)" name="base"
+                  hint="All-inclusive — travel is not charged separately.">
                   <input className="inp num" id="base" name="base" type="number" step="0.01"
                     defaultValue={(e.quote_pesewas / 100).toFixed(2)} />
-                </Field>
-                <Field label="Transport (GHS)" name="transport"
-                  hint={(zones ?? []).map((z) => `${z.name} ${(z.transport_fee_pesewas / 100).toFixed(0)}`).join(" · ")}>
-                  <input className="inp num" id="transport" name="transport" type="number" step="0.01" defaultValue="0" />
                 </Field>
               </div>
               <button className="btn sand" type="submit" style={{ justifyContent: "center" }}>

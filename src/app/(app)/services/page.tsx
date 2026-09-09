@@ -18,7 +18,7 @@ export default async function ServicesPage() {
 
   return (
     <>
-      <PageHead title="Services & pricing" blurb="Your catalogue and the transport fee applied by area." />
+      <PageHead title="Services & pricing" blurb="Your catalogue. Prices are all-inclusive — travel is not charged on top." />
       <div className="cols">
         {(services ?? []).map((s) => (
           <Card key={s.id} title={s.name}
@@ -43,16 +43,14 @@ export default async function ServicesPage() {
       </div>
 
       <div style={{ height: 12 }} />
-      <Card title="Transport fees by zone" pad={false}>
-        <div className="tablewrap">
-          <table>
-            <thead><tr><th>Zone</th><th className="r">Fee</th></tr></thead>
-            <tbody>
-              {(zones ?? []).map((z) => (
-                <tr key={z.id}><td>{z.name}</td><td className="r num">{ghs(z.transport_fee_pesewas)}</td></tr>
-              ))}
-            </tbody>
-          </table>
+      <Card title="Areas we cover">
+        <p className="note" style={{ marginTop: 0 }}>
+          Where therapists travel to. Kept for dispatch and travel planning —
+          not a price list, because travel is included in the service price.
+        </p>
+        <div className="row" style={{ gap: 6, flexWrap: "wrap" }}>
+          {(zones ?? []).map((z) => <Chip key={z.id}>{z.name}</Chip>)}
+          {!zones?.length && <span className="note">No areas defined yet.</span>}
         </div>
       </Card>
     </>

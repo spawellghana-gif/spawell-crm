@@ -26,6 +26,7 @@ export default async function BookingDetail({
     .from("booking_view").select("*").eq("id", params.id).maybeSingle();
   if (!row) notFound();
   const b = row as BookingView;
+
   // Attribution and its conversion, read alongside the booking rather than
   // inside it: a booking must still render if either returns nothing.
   const [{ data: conversion }, { data: bookingAd }] = await Promise.all([
@@ -138,7 +139,7 @@ export default async function BookingDetail({
                   </b>{" "}
                   outstanding
                   <div className="note">
-                    Service {ghs(b.base_pesewas)} · transport {ghs(b.transport_pesewas)}
+                    Service {ghs(b.base_pesewas)}{b.transport_pesewas ? ` · travel ${ghs(b.transport_pesewas)}` : ""}
                     {b.addons_pesewas > 0 && ` · add-ons ${ghs(b.addons_pesewas)}`}
                     {b.discount_pesewas > 0 && ` · discount −${ghs(b.discount_pesewas)}`}
                   </div>
