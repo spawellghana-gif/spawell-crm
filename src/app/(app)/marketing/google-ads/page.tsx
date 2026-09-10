@@ -5,7 +5,13 @@ import { ghs, ghsShort, fmtDate, fmtDateTime, todayAccra, addDays } from "@/lib/
 import { Card, Empty, PageHead, Kpi, Chip, ErrorNote } from "@/components/ui";
 import { googleAdsMissing, googleAdsConfig } from "@/lib/google-ads";
 import { prepareGoogleAdsRuntime } from "@/lib/google-ads-runtime";
-import { retryConversions, validateConversions, backfillConversions, toggleSync } from "./actions";
+import {
+  retryConversions,
+  validateConversions,
+  backfillConversions,
+  toggleSync,
+  saveGoogleAdsServiceAccount,
+} from "./actions";
 
 export const dynamic = "force-dynamic";
 
@@ -58,10 +64,19 @@ export default async function GoogleAdsPage({
     </>;
   }
 
-  // Load the non-secret Ads account/action IDs from CRM settings and reuse the
-  // existing GA4 service-account env vars when available. This makes the page
-  // report the actual remaining connection state instead of only raw env vars.
-  const prepared = await prepareGoogleAdsRuntime(supabase);
+  // Owners load the encrypted service-account credential into the server-only
+  // runtime. Officers never need the private key and therefore do not call the
+  // Vault reader at all.
+  const prepared = await prepareGoogleAdsRuntime(supabase, { loadCredentials: isOwner });
+
+  let credentialConfigured = false;
+  let credentialEmail = "";
+  if (isOwner) {
+    const { data: statusRows } = await supabase.rpc("google_ads_service_account_status");
+    const status: any = Array.isArray(statusRows) ? statusRows[0] : statusRows;
+    credentialConfigured = Boolean(status?.configured);
+    credentialEmail = typeof status?.client_email === "string" ? status.client_email : "";
+  }
 
   const enq = enquiries ?? [];
   const bk = bookings ?? [];
@@ -75,9 +90,9 @@ export default async function GoogleAdsPage({
   const revenue = confirmed.reduce((t, b) => t + (b.total_pesewas ?? 0), 0);
 
   const byStatus = (s: string) => conv.filter((c) => c.status === s).length;
-  const missing = prepared.ok ? googleAdsMissing() : [prepared.reason];
+  const missing = isOwner ? (prepared.ok ? googleAdsMissing() : [prepared.reason]) : [];
   const cfg = googleAdsConfig();
-  const syncOn = Boolean(settings?.google_ads_sync_enabled) && cfg.syncEnabled;
+  const syncOn = Boolean(settings?.google_ads_sync_enabled) && (isOwner ? cfg.syncEnabled : true);
 
   const filtered = searchParams.status ? conv.filter((c) => c.status === searchParams.status) : conv;
 
@@ -129,6 +144,34 @@ export default async function GoogleAdsPage({
           value={confirmed.length ? ghs(Math.round(revenue / confirmed.length)) : "—"}
         />
       </div>
+
+      {isOwner && (
+        <Card title="Direct Google authentication">
+          <p className="note" style={{ marginTop: 0 }}>
+            {credentialConfigured ? (
+              <>Service account <b>{credentialEmail}</b> is encrypted in Supabase Vault. Paste a new JSON key below only when rotating the credential.</>
+            ) : (
+              <>No service-account credential is stored yet. Create a dedicated Google Cloud service account for the Data Manager API, download its JSON key, then paste the complete JSON below. The private key is never displayed again.</>
+            )}
+          </p>
+          <form action={saveGoogleAdsServiceAccount}>
+            <textarea
+              className="inp"
+              name="service_account_json"
+              rows={8}
+              required
+              spellCheck={false}
+              autoComplete="off"
+              placeholder={'{\n  "type": "service_account",\n  "client_email": "...",\n  "private_key": "-----BEGIN PRIVATE KEY-----..."\n}'}
+              style={{ width: "100%", fontFamily: "monospace", marginBottom: 8 }}
+            />
+            <button className="btn pri" type="submit">Store Google credential securely</button>
+          </form>
+          <p className="note" style={{ marginBottom: 0 }}>
+            Keep conversion sync off until <b>Validate</b> succeeds. The CRM only sends confirmed-booking events after you explicitly enable sync.
+          </p>
+        </Card>
+      )}
 
       <Card
         title="Conversion queue"

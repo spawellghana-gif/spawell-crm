@@ -107,3 +107,45 @@ export async function toggleSync(formData: FormData) {
     ? "Sync switched on. Queued conversions can now be reported from the owner controls."
     : "Sync switched off. Conversions keep queuing; nothing is sent to Google.", "ok");
 }
+
+/**
+ * Import a Google service-account JSON key into Supabase Vault.
+ *
+ * The browser posts the JSON directly to this authenticated owner-only server
+ * action. Only client_email and private_key are extracted; the raw JSON is not
+ * written to logs, settings, GitHub, or returned to the browser.
+ */
+export async function saveGoogleAdsServiceAccount(formData: FormData) {
+  await requireRole("owner");
+  const raw = s(formData, "service_account_json");
+  if (!raw) back("Paste the downloaded Google service-account JSON file contents.");
+
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(raw) as Record<string, unknown>;
+  } catch {
+    back("That is not valid JSON. Use the complete service-account key file downloaded from Google Cloud.");
+  }
+
+  if (parsed.type !== "service_account") {
+    back("This must be a Google service-account JSON key (type: service_account).");
+  }
+  const clientEmail = typeof parsed.client_email === "string" ? parsed.client_email.trim() : "";
+  const privateKey = typeof parsed.private_key === "string" ? parsed.private_key : "";
+  if (!clientEmail || !privateKey) {
+    back("The JSON is missing client_email or private_key.");
+  }
+
+  const supabase = supabaseServer();
+  const { error } = await supabase.rpc("set_google_ads_service_account", {
+    p_client_email: clientEmail,
+    p_private_key: privateKey,
+  });
+  if (error) back(`Could not store the Google credential: ${error.message}`);
+
+  const prepared = await prepareGoogleAdsRuntime(supabase);
+  if (!prepared.ok) back(prepared.reason);
+
+  revalidatePath("/marketing/google-ads");
+  back(`Google service account ${clientEmail} is stored securely in Supabase Vault.`, "ok");
+}
