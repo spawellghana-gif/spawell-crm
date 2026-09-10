@@ -23,13 +23,14 @@ export default async function EnquiryDetail({
   if (!enquiry) notFound();
   const e = enquiry as EnquiryView;
 
-  const [{ data: events }, { data: dupes }, { data: lostReasons }, { data: template }, { data: zones }] =
+  const [{ data: events }, { data: dupes }, { data: lostReasons }, { data: template }, { data: zones }, { data: services }] =
     await Promise.all([
       supabase.from("enquiry_event").select("*").eq("enquiry_id", e.id).order("created_at", { ascending: false }),
       supabase.from("enquiry").select("id, ref, status").eq("phone_e164", e.phone_e164).neq("id", e.id),
       supabase.from("lookup_value").select("value, label").eq("kind", "lost_reason").order("sort_order"),
       supabase.from("message_template").select("body").eq("key", "quote").maybeSingle(),
       supabase.from("zone").select("name").order("name"),
+      supabase.from("service").select("id, name").eq("active", true).order("sort_order"),
     ]);
 
   const quoteMessage = fillTemplate(template?.body ?? "Hello {name}, ", {
@@ -69,11 +70,13 @@ export default async function EnquiryDetail({
         <div className="alert warn" style={{ marginBottom: 12 }}>
           <span aria-hidden="true">⚠</span>
           <span>
-            <b>This number appears on another enquiry.</b>{" "}
+            <b>Previous enquiry found for this client.</b>{" "}
             {dupes.map((d) => (
               <Link key={d.id} href={`/enquiries/${d.id}`} style={{ marginRight: 8 }}>{d.ref}</Link>
             ))}
-            Link to the existing client rather than creating a second record.
+            {e.client_id
+              ? <>This enquiry is already linked to the same client profile. <Link href={`/clients/${e.client_id}`}>View client history</Link>.</>
+              : "When converted, the CRM will match the phone number and use the existing client profile."}
           </span>
         </div>
       )}
@@ -106,6 +109,16 @@ export default async function EnquiryDetail({
             <form action={convertToBooking} className="stack" style={{ gap: 11, marginTop: 10 }}>
               <input type="hidden" name="enquiry_id" value={e.id} />
               <div className="fgrid">
+                <Field label="Service" name="service_id"
+                  hint={e.service_id ? "Change it here if the client chose a different service." : "Required before a booking can be created."}>
+                  <select className="inp" id="booking_service_id" name="service_id"
+                    defaultValue={e.service_id ?? ""} required>
+                    <option value="" disabled>Choose a service</option>
+                    {(services ?? []).map((service) => (
+                      <option key={service.id} value={service.id}>{service.name}</option>
+                    ))}
+                  </select>
+                </Field>
                 <Field label="Start" name="starts_at">
                   <input className="inp" id="starts_at" name="starts_at" type="datetime-local"
                     defaultValue={e.preferred_at ? e.preferred_at.slice(0, 16) : undefined} required />

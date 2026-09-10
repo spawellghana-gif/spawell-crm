@@ -186,6 +186,19 @@ export async function convertToBooking(formData: FormData) {
     .from("enquiry").select("*").eq("id", enquiryId).single();
   if (readErr || !e) redirect(`/enquiries/${enquiryId}?error=Enquiry not found`);
 
+  // A booking must always name the service being delivered. Enquiries may be
+  // captured before the client decides, so require the choice at conversion
+  // time and return a useful operator message instead of a database error.
+  const serviceId = s(formData, "service_id") || e.service_id;
+  if (!serviceId) {
+    redirect(`/enquiries/${enquiryId}?error=${encodeURIComponent("Choose a service before converting this enquiry to a booking.")}`);
+  }
+  const { data: selectedService } = await supabase
+    .from("service").select("id, name").eq("id", serviceId).eq("active", true).maybeSingle();
+  if (!selectedService) {
+    redirect(`/enquiries/${enquiryId}?error=${encodeURIComponent("The selected service is unavailable. Choose an active service and try again.")}`);
+  }
+
   // 1. client
   let clientId = e.client_id as string | null;
   if (!clientId) {
@@ -200,7 +213,7 @@ export async function convertToBooking(formData: FormData) {
           whatsapp_e164: e.whatsapp_e164 || e.phone_e164,
           location_type: e.location_type, area: e.area, address: e.address,
           landmark: e.landmark, source: e.source, first_campaign: e.campaign,
-          pref_service_id: e.service_id,
+          pref_service_id: serviceId,
         })
         .select("id").single();
       if (cErr) redirect(`/enquiries/${enquiryId}?error=${encodeURIComponent(cErr.message)}`);
@@ -222,7 +235,7 @@ export async function convertToBooking(formData: FormData) {
     .from("booking")
     .insert({
       client_id: clientId, enquiry_id: e.id, partner_id: e.partner_id,
-      service_id: e.service_id, duration_min: duration, guests,
+      service_id: serviceId, duration_min: duration, guests,
       starts_at: startsAt.toISOString(), ends_at: endsAt.toISOString(),
       location_type: e.location_type, area: e.area, address: e.address,
       landmark: e.landmark, base_pesewas: base, transport_pesewas: transport,
@@ -246,14 +259,12 @@ export async function convertToBooking(formData: FormData) {
   // timestamp records that it was reported, so a later retry cannot
   // double-count the revenue.
   if (ga4SendConfigured()) {
-    const { data: svc } = await supabase
-      .from("service").select("name").eq("id", e.service_id).maybeSingle();
     const sent = await sendBookingToGa4({
       clientId: e.ga_client_id ?? "",
       sessionId: e.ga_session_id || undefined,
       bookingRef: booking!.ref,
       valuePesewas: base + transport,
-      serviceName: svc?.name ?? "Massage",
+      serviceName: selectedService.name,
     });
     if (sent.ok) {
       await supabase.from("booking")

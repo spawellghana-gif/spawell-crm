@@ -51,7 +51,9 @@ describe("existing CRM database compatibility", () => {
   it("a new enquiry saves without including columns from the unapplied migration", async () => {
     let inserted: Record<string, unknown> = {};
     mocks.database.mockReturnValue({ from(table: string) {
-      if (table === "client") return { select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: null }) }) }) };
+      if (table === "client") return {
+        select: () => ({ eq: () => ({ is: () => ({ maybeSingle: async () => ({ data: null }) }) }) }),
+      };
       return {
         select: () => ({ limit: async () => ({ error: { code: "42703", message: "column ad_click_id does not exist" } }) }),
         insert: (row: Record<string, unknown>) => {
