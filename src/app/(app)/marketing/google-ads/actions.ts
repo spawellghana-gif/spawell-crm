@@ -2,7 +2,6 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { headers } from "next/headers";
 import { requireRole } from "@/lib/auth";
 import { processQueue, ensureConversionForBooking } from "@/lib/conversions";
 import { supabaseServer } from "@/lib/supabase/server";
@@ -11,25 +10,12 @@ import { prepareGoogleAdsRuntime } from "@/lib/google-ads-runtime";
 
 const s = (fd: FormData, k: string) => String(fd.get(k) ?? "").trim();
 
-/**
- * Vercel supplies its OIDC token to Functions on the request header, not as a
- * runtime environment variable. Copy it only into this short-lived function
- * process so the existing Google auth module can exchange it with Google STS.
- * The token is never logged, stored in the database, or returned to the browser.
- */
-function hydrateVercelOidcFromRequest() {
-  const token = headers().get("x-vercel-oidc-token")?.trim() ?? "";
-  if (token) process.env.VERCEL_OIDC_TOKEN = token;
-  return token;
-}
-
 function back(message: string, kind: "error" | "ok" = "error"): never {
   redirect(`/marketing/google-ads?${kind}=${encodeURIComponent(message)}`);
 }
 
 export async function retryConversions(formData: FormData) {
   await requireRole("owner");
-  hydrateVercelOidcFromRequest();
   const supabase = supabaseServer();
 
   const prepared = await prepareGoogleAdsRuntime(supabase);
@@ -52,7 +38,6 @@ export async function retryConversions(formData: FormData) {
 
 export async function validateConversions() {
   await requireRole("owner");
-  hydrateVercelOidcFromRequest();
   const supabase = supabaseServer();
 
   const prepared = await prepareGoogleAdsRuntime(supabase);
@@ -87,7 +72,6 @@ export async function backfillConversions() {
 
 export async function toggleSync(formData: FormData) {
   await requireRole("owner");
-  hydrateVercelOidcFromRequest();
   const supabase = supabaseServer();
   const enabled = s(formData, "enabled") === "true";
 
