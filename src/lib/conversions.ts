@@ -87,8 +87,6 @@ export async function ensureConversionForBooking(
     .maybeSingle();
   if (!b) return null;
   if (!["confirmed", "therapist_assigned", "en_route", "arrived", "in_service", "completed", "paid"].includes(b.status)) return null;
-  // Historical bookings without a known confirmation time cannot be uploaded
-  // with today's timestamp: that would invent when the conversion happened.
   if (!b.confirmed_at) return null;
 
   const key = dedupKey(b.ref);
@@ -106,13 +104,9 @@ export async function ensureConversionForBooking(
     .from("conversion_event").select("id, status, revision, google_response").eq("dedup_key", key).maybeSingle();
 
   if (existing) {
-    // Already reported and still valid — do nothing at all. This is the branch
-    // that stops a refresh or a repeated save from double-counting.
     if (existing.status === "synced") {
       return { status: "synced", dedupKey: key, note: "already reported to Google" };
     }
-    // Was voided by a cancellation and is now confirmed again: requeue the
-    // same row rather than creating a second one.
     if (existing.status === "void") {
       const previouslyUploaded = Boolean(existing.google_response?.requestId);
       await supabase.from("conversion_event").update({
@@ -136,7 +130,6 @@ export async function ensureConversionForBooking(
     gclid: b.gclid ?? "",
     gbraid: b.gbraid ?? "",
     wbraid: b.wbraid ?? "",
-    // Hashed here, once, at creation. The raw phone stays on the client record.
     phone_sha256: client?.phone_e164 ? hashPhone(client.phone_e164) : "",
     conversion_at: b.confirmed_at,
     value_pesewas: b.total_pesewas ?? 0,
@@ -153,13 +146,6 @@ export async function ensureConversionForBooking(
   };
 }
 
-/**
- * A booking that is cancelled after being reported.
- *
- * Marked void rather than deleted: the row is the evidence that Google was
- * told, and deleting it would let a later reconfirmation create a genuinely
- * duplicate conversion.
- */
 export async function voidConversionForBooking(supabase: SupabaseClient, bookingRef: string) {
   await supabase.from("conversion_event")
     .update({ status: "void", next_attempt_at: null })
@@ -206,9 +192,9 @@ export async function processQueue(
   }
 
   let synced = 0, failed = 0, attempted = 0;
+  let firstValidationError = "";
 
   for (const ev of due ?? []) {
-    // Claim it, so a second worker running at the same moment skips it.
     if (!opts.validateOnly) {
       const { data: claimed } = await supabase
         .from("conversion_event")
@@ -235,10 +221,13 @@ export async function processQueue(
       phoneSha256: ev.phone_sha256 || undefined,
     }, { validateOnly: opts.validateOnly });
 
-    // Validation checks the payload only. It must not consume attempts, claim
-    // the row, or mark a real conversion as uploaded.
     if (opts.validateOnly) {
-      if (!result.ok) failed++;
+      if (!result.ok) {
+        failed++;
+        if (!firstValidationError) {
+          firstValidationError = (result.error ?? `HTTP ${result.httpStatus}`).replace(/\s+/g, " ").slice(0, 400);
+        }
+      }
       continue;
     }
 
@@ -247,8 +236,6 @@ export async function processQueue(
       attempt_no: attemptNo,
       ok: result.ok,
       http_status: result.httpStatus,
-      // Response only — the request carries hashed customer data and is never
-      // written anywhere.
       response: result.response ?? null,
       error_detail: result.error ?? "",
     });
@@ -277,7 +264,7 @@ export async function processQueue(
   return {
     attempted, synced, failed,
     note: opts.validateOnly
-      ? `${attempted - failed} validated, ${failed} failed validation`
+      ? `${attempted - failed} validated, ${failed} failed validation${firstValidationError ? ` — first error: ${firstValidationError}` : ""}`
       : attempted ? `${synced} uploaded, ${failed} failed` : "nothing due",
   };
 }
