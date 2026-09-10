@@ -6,22 +6,26 @@ export type GoogleAdsRuntimeSettings = {
   google_ads_sync_enabled: boolean | null;
 };
 
+type VaultServiceAccount = {
+  client_email?: unknown;
+  private_key?: unknown;
+};
+
 /**
- * Prepare the server-only Google Ads runtime from the sources we already own.
+ * Prepare the server-only Google Ads runtime from sources owned by the CRM.
  *
- * Customer/conversion IDs are configuration, not secrets, so the CRM settings
- * table is their source of truth. The existing GA4 service account can also be
- * reused for Data Manager once that same identity is granted Google Ads access;
- * Ads-specific credentials still win when they are explicitly configured.
+ * Customer/conversion IDs are non-secret configuration stored in settings.
+ * The preferred credential source is the owner-controlled Supabase Vault
+ * secret. Dedicated Vercel env vars remain a fallback, followed by the
+ * existing GA4 service account when one is available.
  *
- * process.env is populated only inside the server runtime so the existing Ads
- * uploader and its validation logic remain unchanged and no key reaches the
- * browser. Each call refreshes the values from the database, which prevents a
- * warm serverless instance from keeping a stale toggle or action id.
+ * The Vault RPC is SECURITY DEFINER and refuses non-owner callers (except a
+ * future service-role cron worker). Secrets are copied only into this server
+ * process and are never returned to a browser component.
  */
 export async function prepareGoogleAdsRuntime(
   supabase: SupabaseClient,
-  opts: { syncEnabled?: boolean } = {},
+  opts: { syncEnabled?: boolean; loadCredentials?: boolean } = {},
 ): Promise<
   | { ok: true; settings: GoogleAdsRuntimeSettings }
   | { ok: false; reason: string }
@@ -37,18 +41,31 @@ export async function prepareGoogleAdsRuntime(
 
   const settings = data as GoogleAdsRuntimeSettings;
 
-  // Non-secret routing configuration is managed in the CRM database.
   process.env.GOOGLE_ADS_CUSTOMER_ID = (settings.google_ads_customer_id ?? "").trim();
   process.env.GOOGLE_ADS_CONVERSION_ACTION = (settings.google_ads_conversion_action ?? "").trim();
 
-  // Reuse the already-working GA4 service account unless dedicated Ads
-  // credentials have been supplied. The Google-side account permission is
-  // still required; this merely avoids storing the same private key twice.
-  if (!(process.env.GOOGLE_ADS_SA_CLIENT_EMAIL ?? "").trim()) {
-    process.env.GOOGLE_ADS_SA_CLIENT_EMAIL = (process.env.GA4_SA_CLIENT_EMAIL ?? "").trim();
+  let vaultLoaded = false;
+  if (opts.loadCredentials !== false) {
+    const { data: secret, error: secretError } = await supabase.rpc("get_google_ads_service_account");
+    if (!secretError && secret && typeof secret === "object") {
+      const credential = secret as VaultServiceAccount;
+      const email = typeof credential.client_email === "string" ? credential.client_email.trim() : "";
+      const key = typeof credential.private_key === "string" ? credential.private_key.trim() : "";
+      if (email && key) {
+        process.env.GOOGLE_ADS_SA_CLIENT_EMAIL = email;
+        process.env.GOOGLE_ADS_SA_PRIVATE_KEY = key;
+        vaultLoaded = true;
+      }
+    }
   }
-  if (!(process.env.GOOGLE_ADS_SA_PRIVATE_KEY ?? "").trim()) {
-    process.env.GOOGLE_ADS_SA_PRIVATE_KEY = (process.env.GA4_SA_PRIVATE_KEY ?? "").trim();
+
+  if (!vaultLoaded) {
+    if (!(process.env.GOOGLE_ADS_SA_CLIENT_EMAIL ?? "").trim()) {
+      process.env.GOOGLE_ADS_SA_CLIENT_EMAIL = (process.env.GA4_SA_CLIENT_EMAIL ?? "").trim();
+    }
+    if (!(process.env.GOOGLE_ADS_SA_PRIVATE_KEY ?? "").trim()) {
+      process.env.GOOGLE_ADS_SA_PRIVATE_KEY = (process.env.GA4_SA_PRIVATE_KEY ?? "").trim();
+    }
   }
 
   process.env.GOOGLE_ADS_SYNC_ENABLED = String(
