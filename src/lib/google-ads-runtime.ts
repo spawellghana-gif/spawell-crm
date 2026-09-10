@@ -7,6 +7,7 @@ export type GoogleAdsRuntimeSettings = {
 };
 
 type VaultServiceAccount = {
+  project_id?: unknown;
   client_email?: unknown;
   private_key?: unknown;
 };
@@ -49,9 +50,11 @@ export async function prepareGoogleAdsRuntime(
     const { data: secret, error: secretError } = await supabase.rpc("get_google_ads_service_account");
     if (!secretError && secret && typeof secret === "object") {
       const credential = secret as VaultServiceAccount;
+      const projectId = typeof credential.project_id === "string" ? credential.project_id.trim() : "";
       const email = typeof credential.client_email === "string" ? credential.client_email.trim() : "";
       const key = typeof credential.private_key === "string" ? credential.private_key.trim() : "";
-      if (email && key) {
+      if (projectId && email && key) {
+        process.env.GOOGLE_ADS_QUOTA_PROJECT_ID = projectId;
         process.env.GOOGLE_ADS_SA_CLIENT_EMAIL = email;
         process.env.GOOGLE_ADS_SA_PRIVATE_KEY = key;
         vaultLoaded = true;
@@ -60,6 +63,9 @@ export async function prepareGoogleAdsRuntime(
   }
 
   if (!vaultLoaded) {
+    if (!(process.env.GOOGLE_ADS_QUOTA_PROJECT_ID ?? "").trim()) {
+      process.env.GOOGLE_ADS_QUOTA_PROJECT_ID = (process.env.GOOGLE_CLOUD_PROJECT ?? "").trim();
+    }
     if (!(process.env.GOOGLE_ADS_SA_CLIENT_EMAIL ?? "").trim()) {
       process.env.GOOGLE_ADS_SA_CLIENT_EMAIL = (process.env.GA4_SA_CLIENT_EMAIL ?? "").trim();
     }
