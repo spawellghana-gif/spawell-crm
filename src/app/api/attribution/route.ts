@@ -9,13 +9,14 @@
  * token the caller just caused to exist, and there is no endpoint anywhere
  * that turns a token back into click data without a signed-in staff session.
  *
- * Uses the service key because `ad_click` has no insert policy for anon, by
- * design: nothing signed in should be writing here either.
+ * Uses the public Supabase anon key to call a narrowly-scoped SECURITY DEFINER
+ * function. That function can only insert capped attribution fields into
+ * ad_click, so this route no longer depends on a Vercel service-role secret.
  */
 
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import { SUPABASE_URL } from "@/lib/supabase/config";
+import { SUPABASE_ANON_KEY, SUPABASE_URL } from "@/lib/supabase/config";
 import { mintToken, sanitiseClick, attributionStatus } from "@/lib/attribution";
 
 export const dynamic = "force-dynamic";
@@ -44,15 +45,6 @@ export async function POST(req: Request) {
   if (!origin || !ALLOWED_ORIGINS.includes(origin)) {
     return NextResponse.json({ error: "Origin is not allowed." }, { status: 403, headers });
   }
-  const serviceKey = (process.env.SUPABASE_SERVICE_ROLE_KEY ?? "").trim();
-
-  // Fail loudly in the log rather than silently dropping every click.
-  if (!serviceKey) {
-    return NextResponse.json(
-      { error: "Attribution capture is not configured." },
-      { status: 503, headers },
-    );
-  }
 
   let body: unknown;
   try {
@@ -69,7 +61,7 @@ export async function POST(req: Request) {
     return new NextResponse(null, { status: 204, headers });
   }
 
-  const supabase = createClient(SUPABASE_URL, serviceKey, {
+  const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
     auth: { persistSession: false, autoRefreshToken: false },
   });
 
@@ -77,7 +69,20 @@ export async function POST(req: Request) {
   // error the website has no way to act on.
   for (let attempt = 0; attempt < 5; attempt++) {
     const token = mintToken();
-    const { error } = await supabase.from("ad_click").insert({ token, ...click });
+    const { error } = await supabase.rpc("capture_ad_click", {
+      p_token: token,
+      p_gclid: click.gclid,
+      p_gbraid: click.gbraid,
+      p_wbraid: click.wbraid,
+      p_utm_source: click.utm_source,
+      p_utm_medium: click.utm_medium,
+      p_utm_campaign: click.utm_campaign,
+      p_utm_term: click.utm_term,
+      p_utm_content: click.utm_content,
+      p_landing_page: click.landing_page,
+      p_referrer: click.referrer,
+    });
+
     if (!error) {
       return NextResponse.json({ token }, { status: 201, headers });
     }
