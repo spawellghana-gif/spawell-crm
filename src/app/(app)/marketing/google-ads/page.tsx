@@ -4,6 +4,7 @@ import { supabaseServer } from "@/lib/supabase/server";
 import { ghs, ghsShort, fmtDate, fmtDateTime, todayAccra, addDays } from "@/lib/format";
 import { Card, Empty, PageHead, Kpi, Chip, ErrorNote } from "@/components/ui";
 import { googleAdsMissing, googleAdsConfig } from "@/lib/google-ads";
+import { prepareGoogleAdsRuntime } from "@/lib/google-ads-runtime";
 import { retryConversions, validateConversions, backfillConversions, toggleSync } from "./actions";
 
 export const dynamic = "force-dynamic";
@@ -57,6 +58,11 @@ export default async function GoogleAdsPage({
     </>;
   }
 
+  // Load the non-secret Ads account/action IDs from CRM settings and reuse the
+  // existing GA4 service-account env vars when available. This makes the page
+  // report the actual remaining connection state instead of only raw env vars.
+  const prepared = await prepareGoogleAdsRuntime(supabase);
+
   const enq = enquiries ?? [];
   const bk = bookings ?? [];
   const conv = conversions ?? [];
@@ -69,7 +75,7 @@ export default async function GoogleAdsPage({
   const revenue = confirmed.reduce((t, b) => t + (b.total_pesewas ?? 0), 0);
 
   const byStatus = (s: string) => conv.filter((c) => c.status === s).length;
-  const missing = googleAdsMissing();
+  const missing = prepared.ok ? googleAdsMissing() : [prepared.reason];
   const cfg = googleAdsConfig();
   const syncOn = Boolean(settings?.google_ads_sync_enabled) && cfg.syncEnabled;
 
@@ -91,8 +97,8 @@ export default async function GoogleAdsPage({
         <div className="alert warn" style={{ marginBottom: 14 }}>
           <span aria-hidden="true">◔</span>
           <span>
-            <b>Google Ads is not connected yet.</b> Complete the connection setup
-            before sending confirmed bookings to Google.
+            <b>Google Ads is not connected yet.</b> Remaining: {missing.join(", ")}.
+            Confirmed bookings stay safely queued until these are available.
           </span>
         </div>
       )}
