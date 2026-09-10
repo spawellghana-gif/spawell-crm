@@ -13,6 +13,7 @@
  *   GOOGLE_ADS_CUSTOMER_ID          operating account, digits only, no dashes
  *   GOOGLE_ADS_LOGIN_CUSTOMER_ID    manager account, if one manages the above
  *   GOOGLE_ADS_CONVERSION_ACTION    the conversion action id from Google Ads
+ *   GOOGLE_ADS_QUOTA_PROJECT_ID     Google Cloud project used for API quota
  *   GOOGLE_ADS_SA_CLIENT_EMAIL      service account with Data Manager access
  *   GOOGLE_ADS_SA_PRIVATE_KEY       its private key
  *   GOOGLE_ADS_SYNC_ENABLED         "true" to actually send
@@ -29,6 +30,7 @@ export type GoogleAdsConfig = {
   customerId: string;
   loginCustomerId: string;
   conversionAction: string;
+  quotaProjectId: string;
   clientEmail: string;
   privateKey: string;
   syncEnabled: boolean;
@@ -42,6 +44,7 @@ export function googleAdsConfig(): GoogleAdsConfig {
     customerId: env("GOOGLE_ADS_CUSTOMER_ID").replace(/-/g, ""),
     loginCustomerId: env("GOOGLE_ADS_LOGIN_CUSTOMER_ID").replace(/-/g, ""),
     conversionAction: env("GOOGLE_ADS_CONVERSION_ACTION"),
+    quotaProjectId: env("GOOGLE_ADS_QUOTA_PROJECT_ID"),
     clientEmail: env("GOOGLE_ADS_SA_CLIENT_EMAIL"),
     privateKey: env("GOOGLE_ADS_SA_PRIVATE_KEY").replace(/\\n/g, "\n"),
     syncEnabled: env("GOOGLE_ADS_SYNC_ENABLED").toLowerCase() === "true",
@@ -54,6 +57,7 @@ export function googleAdsMissing(): string[] {
   const missing: string[] = [];
   if (!c.customerId) missing.push("GOOGLE_ADS_CUSTOMER_ID");
   if (!c.conversionAction) missing.push("GOOGLE_ADS_CONVERSION_ACTION");
+  if (!c.quotaProjectId) missing.push("GOOGLE_ADS_QUOTA_PROJECT_ID");
   if (!c.clientEmail) missing.push("GOOGLE_ADS_SA_CLIENT_EMAIL");
   if (!c.privateKey) missing.push("GOOGLE_ADS_SA_PRIVATE_KEY");
   return missing;
@@ -241,7 +245,11 @@ export async function sendConversion(
     const token = await accessToken();
     const res = await fetch(INGEST_URL, {
       method: "POST",
-      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      headers: {
+        authorization: `Bearer ${token}`,
+        "content-type": "application/json",
+        "x-goog-user-project": c.quotaProjectId,
+      },
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(15_000),
     });
