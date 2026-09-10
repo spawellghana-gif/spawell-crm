@@ -3,14 +3,13 @@ import { requireRole } from "@/lib/auth";
 import { supabaseServer } from "@/lib/supabase/server";
 import { ghs, ghsShort, fmtDate, fmtDateTime, todayAccra, addDays } from "@/lib/format";
 import { Card, Empty, PageHead, Kpi, Chip, ErrorNote } from "@/components/ui";
-import { googleAdsMissing, googleAdsConfig } from "@/lib/google-ads";
+import { googleAdsMissing, googleAdsConfig, googleAdsAuthMode, GOOGLE_ADS_WIF } from "@/lib/google-ads";
 import { prepareGoogleAdsRuntime } from "@/lib/google-ads-runtime";
 import {
   retryConversions,
   validateConversions,
   backfillConversions,
   toggleSync,
-  saveGoogleAdsServiceAccount,
 } from "./actions";
 
 export const dynamic = "force-dynamic";
@@ -64,19 +63,7 @@ export default async function GoogleAdsPage({
     </>;
   }
 
-  // Owners load the encrypted service-account credential into the server-only
-  // runtime. Officers never need the private key and therefore do not call the
-  // Vault reader at all.
   const prepared = await prepareGoogleAdsRuntime(supabase, { loadCredentials: isOwner });
-
-  let credentialConfigured = false;
-  let credentialEmail = "";
-  if (isOwner) {
-    const { data: statusRows } = await supabase.rpc("google_ads_service_account_status");
-    const status: any = Array.isArray(statusRows) ? statusRows[0] : statusRows;
-    credentialConfigured = Boolean(status?.configured);
-    credentialEmail = typeof status?.client_email === "string" ? status.client_email : "";
-  }
 
   const enq = enquiries ?? [];
   const bk = bookings ?? [];
@@ -92,6 +79,7 @@ export default async function GoogleAdsPage({
   const byStatus = (s: string) => conv.filter((c) => c.status === s).length;
   const missing = isOwner ? (prepared.ok ? googleAdsMissing() : [prepared.reason]) : [];
   const cfg = googleAdsConfig();
+  const authMode = isOwner ? googleAdsAuthMode() : "none";
   const syncOn = Boolean(settings?.google_ads_sync_enabled) && (isOwner ? cfg.syncEnabled : true);
 
   const filtered = searchParams.status ? conv.filter((c) => c.status === searchParams.status) : conv;
@@ -147,28 +135,28 @@ export default async function GoogleAdsPage({
 
       {isOwner && (
         <Card title="Direct Google authentication">
-          <p className="note" style={{ marginTop: 0 }}>
-            {credentialConfigured ? (
-              <>Service account <b>{credentialEmail}</b> is encrypted in Supabase Vault. Paste a new JSON key below only when rotating the credential.</>
-            ) : (
-              <>No service-account credential is stored yet. Create a dedicated Google Cloud service account for the Data Manager API, download its JSON key, then paste the complete JSON below. The private key is never displayed again.</>
-            )}
-          </p>
-          <form action={saveGoogleAdsServiceAccount}>
-            <textarea
-              className="inp"
-              name="service_account_json"
-              rows={8}
-              required
-              spellCheck={false}
-              autoComplete="off"
-              placeholder={'{\n  "type": "service_account",\n  "client_email": "...",\n  "private_key": "-----BEGIN PRIVATE KEY-----..."\n}'}
-              style={{ width: "100%", fontFamily: "monospace", marginBottom: 8 }}
-            />
-            <button className="btn pri" type="submit">Store Google credential securely</button>
-          </form>
+          {authMode === "vercel_oidc" ? (
+            <>
+              <p className="note" style={{ marginTop: 0 }}>
+                <b>Keyless authentication is active.</b> Vercel issues a short-lived OIDC token for this production deployment; Google exchanges it through Workload Identity Federation and impersonates the dedicated service account. No Google private key is stored anywhere.
+              </p>
+              <div className="note" style={{ lineHeight: 1.6 }}>
+                Google Cloud project: <b>{GOOGLE_ADS_WIF.projectId}</b><br />
+                Workload pool/provider: <b>{GOOGLE_ADS_WIF.poolId}/{GOOGLE_ADS_WIF.providerId}</b><br />
+                Service account: <b>{GOOGLE_ADS_WIF.serviceAccountEmail}</b>
+              </div>
+            </>
+          ) : authMode === "service_account_key" ? (
+            <p className="note" style={{ margin: 0 }}>
+              A legacy service-account key is available as a fallback. Production should use Vercel OIDC whenever possible.
+            </p>
+          ) : (
+            <p className="note" style={{ margin: 0 }}>
+              Waiting for the Vercel production OIDC token. Confirm this page is running on the production Vercel deployment before validating conversions.
+            </p>
+          )}
           <p className="note" style={{ marginBottom: 0 }}>
-            Keep conversion sync off until <b>Validate</b> succeeds. The CRM only sends confirmed-booking events after you explicitly enable sync.
+            Keep conversion sync off until <b>Validate</b> succeeds. Validation checks Google without reporting a conversion.
           </p>
         </Card>
       )}
