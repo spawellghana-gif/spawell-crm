@@ -6,6 +6,7 @@ import { requireRole } from "@/lib/auth";
 import { serviceClient, processQueue, ensureConversionForBooking } from "@/lib/conversions";
 import { supabaseServer } from "@/lib/supabase/server";
 import { googleAdsConfig, googleAdsMissing } from "@/lib/google-ads";
+import { prepareGoogleAdsRuntime } from "@/lib/google-ads-runtime";
 
 const s = (fd: FormData, k: string) => String(fd.get(k) ?? "").trim();
 
@@ -23,6 +24,9 @@ export async function retryConversions(formData: FormData) {
   await requireRole("owner");
   const service = serviceClient();
   if (!service) back("Server credentials are not configured, so nothing can be sent.");
+
+  const prepared = await prepareGoogleAdsRuntime(service);
+  if (!prepared.ok) back(prepared.reason);
 
   const id = s(formData, "conversion_id");
   if (id) {
@@ -48,6 +52,10 @@ export async function validateConversions() {
   await requireRole("owner");
   const service = serviceClient();
   if (!service) back("Server credentials are not configured.");
+
+  const prepared = await prepareGoogleAdsRuntime(service);
+  if (!prepared.ok) back(prepared.reason);
+
   const result = await processQueue(service, { limit: 5, validateOnly: true });
   revalidatePath("/marketing/google-ads");
   back(`Validation run: ${result.note}. Nothing was reported to Google.`, result.failed ? "error" : "ok");
@@ -85,8 +93,12 @@ export async function toggleSync(formData: FormData) {
   await requireRole("owner");
   const supabase = supabaseServer();
   const enabled = s(formData, "enabled") === "true";
+
+  const prepared = await prepareGoogleAdsRuntime(supabase, { syncEnabled: enabled });
+  if (!prepared.ok) back(prepared.reason);
+
   if (enabled && (googleAdsMissing().length || !googleAdsConfig().syncEnabled)) {
-    back("Complete the Google Ads connection and set GOOGLE_ADS_SYNC_ENABLED=true before enabling sync.");
+    back("Complete the Google Ads connection before enabling sync.");
   }
   const { error } = await supabase
     .from("settings").update({ google_ads_sync_enabled: enabled }).eq("id", true);
