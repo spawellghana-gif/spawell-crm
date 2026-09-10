@@ -1,30 +1,35 @@
 /**
  * Google Ads confirmed-booking conversions, via the Data Manager API.
  *
- * This is Google's current architecture for offline conversions and enhanced
- * conversions for leads — POST to datamanager.googleapis.com/v1/events:ingest.
- * It replaces the older Google Ads API ConversionUploadService route, which is
- * why none of that appears here.
- *
- * Nothing in this file runs in the browser and nothing here is imported by a
- * client component. Credentials come from the environment; the module is inert
- * and reports itself unconfigured when they are absent.
- *
- *   GOOGLE_ADS_CUSTOMER_ID          operating account, digits only, no dashes
- *   GOOGLE_ADS_LOGIN_CUSTOMER_ID    manager account, if one manages the above
- *   GOOGLE_ADS_CONVERSION_ACTION    the conversion action id from Google Ads
- *   GOOGLE_ADS_QUOTA_PROJECT_ID     Google Cloud project used for API quota
- *   GOOGLE_ADS_SA_CLIENT_EMAIL      service account with Data Manager access
- *   GOOGLE_ADS_SA_PRIVATE_KEY       its private key
- *   GOOGLE_ADS_SYNC_ENABLED         "true" to actually send
+ * Production authentication is keyless:
+ * Vercel OIDC -> Google Security Token Service -> service-account
+ * impersonation -> Data Manager API. A legacy JSON service-account key may be
+ * used only as a fallback for non-Vercel environments.
  */
 
 import { createHash, createSign } from "node:crypto";
 
 const INGEST_URL = "https://datamanager.googleapis.com/v1/events:ingest";
 const SCOPE = "https://www.googleapis.com/auth/datamanager";
+const CLOUD_PLATFORM_SCOPE = "https://www.googleapis.com/auth/cloud-platform";
+
+/**
+ * Non-secret Google/Vercel federation identifiers for this CRM deployment.
+ * The Google provider itself additionally enforces the production-only `sub`
+ * condition, so a token from another Vercel project/environment is rejected.
+ */
+export const GOOGLE_ADS_WIF = {
+  projectId: "rising-capsule-508207-c9",
+  projectNumber: "886115180549",
+  poolId: "vercel",
+  providerId: "vercel-prod",
+  serviceAccountEmail: "spawell-service-manager@rising-capsule-508207-c9.iam.gserviceaccount.com",
+  expectedVercelAudience: "https://vercel.com/spawellghana-7029s-projects",
+} as const;
 
 const env = (k: string) => (process.env[k] ?? "").trim();
+
+export type GoogleAdsAuthMode = "vercel_oidc" | "service_account_key" | "none";
 
 export type GoogleAdsConfig = {
   customerId: string;
@@ -38,17 +43,21 @@ export type GoogleAdsConfig = {
 
 export function googleAdsConfig(): GoogleAdsConfig {
   return {
-    // Google wants the account id without dashes; the id is usually written
-    // "627-977-5396" everywhere else, so accept either and normalise here
-    // rather than making whoever fills in the variable remember.
     customerId: env("GOOGLE_ADS_CUSTOMER_ID").replace(/-/g, ""),
     loginCustomerId: env("GOOGLE_ADS_LOGIN_CUSTOMER_ID").replace(/-/g, ""),
     conversionAction: env("GOOGLE_ADS_CONVERSION_ACTION"),
-    quotaProjectId: env("GOOGLE_ADS_QUOTA_PROJECT_ID"),
+    quotaProjectId: env("GOOGLE_ADS_QUOTA_PROJECT_ID") || GOOGLE_ADS_WIF.projectId,
     clientEmail: env("GOOGLE_ADS_SA_CLIENT_EMAIL"),
     privateKey: env("GOOGLE_ADS_SA_PRIVATE_KEY").replace(/\\n/g, "\n"),
     syncEnabled: env("GOOGLE_ADS_SYNC_ENABLED").toLowerCase() === "true",
   };
+}
+
+export function googleAdsAuthMode(): GoogleAdsAuthMode {
+  if (env("VERCEL_OIDC_TOKEN")) return "vercel_oidc";
+  const c = googleAdsConfig();
+  if (c.clientEmail && c.privateKey) return "service_account_key";
+  return "none";
 }
 
 /** What is still missing, in the words of the person who has to supply it. */
@@ -58,8 +67,7 @@ export function googleAdsMissing(): string[] {
   if (!c.customerId) missing.push("GOOGLE_ADS_CUSTOMER_ID");
   if (!c.conversionAction) missing.push("GOOGLE_ADS_CONVERSION_ACTION");
   if (!c.quotaProjectId) missing.push("GOOGLE_ADS_QUOTA_PROJECT_ID");
-  if (!c.clientEmail) missing.push("GOOGLE_ADS_SA_CLIENT_EMAIL");
-  if (!c.privateKey) missing.push("GOOGLE_ADS_SA_PRIVATE_KEY");
+  if (googleAdsAuthMode() === "none") missing.push("Vercel OIDC or service-account credential");
   return missing;
 }
 
@@ -69,11 +77,6 @@ export function googleAdsConfigured(): boolean {
 
 /* ------------------------------------------------------- normalise + hash */
 
-/**
- * Google's normalisation rules, applied before hashing. Getting these wrong
- * does not error — it silently produces a hash that matches nobody, which is
- * indistinguishable from having no customers. Hence the specificity.
- */
 export function normaliseEmail(raw: string): string {
   const email = (raw ?? "").trim().toLowerCase().replace(/\s+/g, "");
   const at = email.lastIndexOf("@");
@@ -81,8 +84,6 @@ export function normaliseEmail(raw: string): string {
   const domain = email.slice(at + 1);
   let local = email.slice(0, at);
 
-  // Gmail ignores dots and everything after a plus. Other providers do not,
-  // so stripping them everywhere would break matching on those domains.
   if (domain === "gmail.com" || domain === "googlemail.com") {
     local = local.replace(/\./g, "");
     const plus = local.indexOf("+");
@@ -91,17 +92,10 @@ export function normaliseEmail(raw: string): string {
   return local && domain ? `${local}@${domain}` : "";
 }
 
-/**
- * E.164, which is already how this CRM stores phone numbers — see
- * `normalisePhone` in lib/format. This guards the boundary anyway, because a
- * number that arrived some other way must not reach Google half-formatted.
- */
 export function normalisePhoneForGoogle(raw: string): string {
   const digits = (raw ?? "").replace(/[^\d+]/g, "");
   if (!digits) return "";
   const e164 = digits.startsWith("+") ? digits : `+${digits}`;
-  // A bare local number with no country code cannot be matched and must not be
-  // guessed at — sending "+0244010101" would be a fabricated identity.
   return /^\+[1-9]\d{7,14}$/.test(e164) ? e164 : "";
 }
 
@@ -115,17 +109,64 @@ export const hashPhone = (raw: string) => sha256Hex(normalisePhoneForGoogle(raw)
 
 let cachedToken: { value: string; expiresAt: number } | null = null;
 
+function googleError(body: any, fallback: string): string {
+  return body?.error?.message ?? body?.error_description ?? body?.error ?? fallback;
+}
+
 /**
- * Service-account access token, signed locally.
- *
- * Cached until a minute before expiry: a sync run submits many events and
- * there is no reason to mint a token per event.
+ * Exchange Vercel's short-lived OIDC token for a Google federated token, then
+ * impersonate the dedicated service account to obtain the Data Manager scope.
  */
-async function accessToken(): Promise<string> {
-  if (cachedToken && cachedToken.expiresAt > Date.now() + 60_000) {
-    return cachedToken.value;
+async function oidcAccessToken(subjectToken: string): Promise<{ value: string; expiresAt: number }> {
+  const audience = `//iam.googleapis.com/projects/${GOOGLE_ADS_WIF.projectNumber}/locations/global/workloadIdentityPools/${GOOGLE_ADS_WIF.poolId}/providers/${GOOGLE_ADS_WIF.providerId}`;
+
+  const stsRes = await fetch("https://sts.googleapis.com/v1/token", {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      audience,
+      grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
+      requested_token_type: "urn:ietf:params:oauth:token-type:access_token",
+      scope: CLOUD_PLATFORM_SCOPE,
+      subject_token_type: "urn:ietf:params:oauth:token-type:jwt",
+      subject_token: subjectToken,
+    }),
+    signal: AbortSignal.timeout(15_000),
+  });
+  const stsBody = await stsRes.json().catch(() => ({} as any));
+  if (!stsRes.ok || !stsBody.access_token) {
+    throw new Error(`Google STS rejected Vercel OIDC: ${googleError(stsBody, String(stsRes.status))}`);
   }
-  const c = googleAdsConfig();
+
+  const serviceAccount = encodeURIComponent(GOOGLE_ADS_WIF.serviceAccountEmail);
+  const impersonateRes = await fetch(
+    `https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/${serviceAccount}:generateAccessToken`,
+    {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${stsBody.access_token}`,
+        "content-type": "application/json",
+        "x-goog-user-project": GOOGLE_ADS_WIF.projectId,
+      },
+      body: JSON.stringify({ scope: [SCOPE], lifetime: "3600s" }),
+      signal: AbortSignal.timeout(15_000),
+    },
+  );
+  const impersonateBody = await impersonateRes.json().catch(() => ({} as any));
+  if (!impersonateRes.ok || !impersonateBody.accessToken) {
+    throw new Error(
+      `Google service-account impersonation failed: ${googleError(impersonateBody, String(impersonateRes.status))}`,
+    );
+  }
+
+  const expiresAt = impersonateBody.expireTime
+    ? Date.parse(impersonateBody.expireTime)
+    : Date.now() + 55 * 60_000;
+  return { value: impersonateBody.accessToken, expiresAt };
+}
+
+/** Legacy service-account JSON-key flow retained only as a fallback. */
+async function keyAccessToken(c: GoogleAdsConfig): Promise<{ value: string; expiresAt: number }> {
   const now = Math.floor(Date.now() / 1000);
   const b64 = (v: string) =>
     Buffer.from(v).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
@@ -154,19 +195,38 @@ async function accessToken(): Promise<string> {
     }),
     signal: AbortSignal.timeout(15_000),
   });
-
   const body = await res.json().catch(() => ({} as any));
   if (!res.ok || !body.access_token) {
-    throw new Error(`Google refused the service account: ${body.error_description ?? body.error ?? res.status}`);
+    throw new Error(`Google refused the service account key: ${googleError(body, String(res.status))}`);
   }
-  cachedToken = { value: body.access_token, expiresAt: Date.now() + (body.expires_in ?? 3600) * 1000 };
+  return {
+    value: body.access_token,
+    expiresAt: Date.now() + (body.expires_in ?? 3600) * 1000,
+  };
+}
+
+async function accessToken(): Promise<string> {
+  if (cachedToken && cachedToken.expiresAt > Date.now() + 60_000) {
+    return cachedToken.value;
+  }
+
+  const oidc = env("VERCEL_OIDC_TOKEN");
+  if (oidc) {
+    cachedToken = await oidcAccessToken(oidc);
+    return cachedToken.value;
+  }
+
+  const c = googleAdsConfig();
+  if (!c.clientEmail || !c.privateKey) {
+    throw new Error("No Google authentication is available: Vercel OIDC token and service-account key are both absent.");
+  }
+  cachedToken = await keyAccessToken(c);
   return cachedToken.value;
 }
 
 /* ------------------------------------------------------------- ingest */
 
 export type ConversionPayload = {
-  /** Both the local idempotency key and Google's transactionId. */
   transactionId: string;
   conversionAt: string;
   valuePesewas: number;
@@ -185,13 +245,6 @@ export type IngestResult = {
   error?: string;
 };
 
-/**
- * Send one conversion.
- *
- * `validateOnly` asks Google to check the payload without recording it, which
- * is how the integration can be proven end to end before a single real
- * conversion is reported.
- */
 export async function sendConversion(
   payload: ConversionPayload,
   opts: { validateOnly?: boolean } = {},
@@ -211,9 +264,6 @@ export async function sendConversion(
   if (payload.gbraid) adIdentifiers.gbraid = payload.gbraid;
   if (payload.wbraid) adIdentifiers.wbraid = payload.wbraid;
 
-  // Google needs a click identifier or matchable first-party data. With
-  // neither there is nothing to attribute, and sending anyway would be asking
-  // Google to invent a link. The caller decides what to do about it.
   if (!Object.keys(adIdentifiers).length && !identifiers.length) {
     return { ok: false, httpStatus: 0, response: null, error: "No ad identifier and no customer match data — nothing to attribute." };
   }
@@ -235,7 +285,6 @@ export async function sendConversion(
       transactionId: payload.transactionId,
       eventSource: "OTHER",
       ...(identifiers.length ? { userData: { userIdentifiers: identifiers } } : {}),
-      // No consent signal is invented from a booking or its contact details.
       consent: { adPersonalization: "CONSENT_STATUS_UNSPECIFIED", adUserData: "CONSENT_STATUS_UNSPECIFIED" },
     }],
     validateOnly: Boolean(opts.validateOnly),
@@ -260,8 +309,6 @@ export async function sendConversion(
       return { ok: false, httpStatus: res.status, response, error: message };
     }
 
-    // A 200 can still carry per-event failures. Treating that as success is
-    // how an integration ends up quietly reporting nothing for a month.
     const failures = (response as any)?.errors ?? (response as any)?.eventErrors;
     if (Array.isArray(failures) && failures.length) {
       return { ok: false, httpStatus: res.status, response, error: JSON.stringify(failures).slice(0, 500) };
@@ -282,12 +329,6 @@ export async function sendConversion(
   }
 }
 
-/**
- * Retry schedule: 1m, 5m, 25m, 2h, 10h, then give up at six attempts.
- *
- * Exponential so a Google outage is not hammered, and capped so a permanently
- * malformed event stops consuming the queue and surfaces as failed instead.
- */
 export const MAX_ATTEMPTS = 6;
 
 export function nextAttemptAt(attempts: number, from = new Date()): Date | null {
