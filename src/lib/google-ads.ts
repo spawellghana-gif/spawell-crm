@@ -14,23 +14,18 @@ const INGEST_URL = "https://datamanager.googleapis.com/v1/events:ingest";
 const SCOPE = "https://www.googleapis.com/auth/datamanager";
 const CLOUD_PLATFORM_SCOPE = "https://www.googleapis.com/auth/cloud-platform";
 
-/**
- * Non-secret Google/Vercel federation identifiers for this CRM deployment.
- * The Google provider itself additionally enforces the production-only `sub`
- * condition, so a token from another Vercel project/environment is rejected.
- */
 export const GOOGLE_ADS_WIF = {
   projectId: "rising-capsule-508207-c9",
   projectNumber: "886115180549",
   poolId: "vercel",
   providerId: "vercel-production",
   serviceAccountEmail: "spawell-service-manager@rising-capsule-508207-c9.iam.gserviceaccount.com",
+  expectedVercelAudience: "https://vercel.com/spawellghana-7029s-projects",
 } as const;
 
 const env = (k: string) => (process.env[k] ?? "").trim();
 
 export type GoogleAdsAuthMode = "vercel_oidc" | "service_account_key" | "none";
-
 export type GoogleAdsConfig = {
   customerId: string;
   loginCustomerId: string;
@@ -103,10 +98,6 @@ function googleError(body: any, fallback: string): string {
   return body?.error?.message ?? body?.error_description ?? body?.error ?? fallback;
 }
 
-function providerAudience(): string {
-  return `https://iam.googleapis.com/projects/${GOOGLE_ADS_WIF.projectNumber}/locations/global/workloadIdentityPools/${GOOGLE_ADS_WIF.poolId}/providers/${GOOGLE_ADS_WIF.providerId}`;
-}
-
 async function oidcAccessToken(subjectToken: string): Promise<{ value: string; expiresAt: number }> {
   const audience = `//iam.googleapis.com/projects/${GOOGLE_ADS_WIF.projectNumber}/locations/global/workloadIdentityPools/${GOOGLE_ADS_WIF.poolId}/providers/${GOOGLE_ADS_WIF.providerId}`;
   const stsRes = await fetch("https://sts.googleapis.com/v1/token", {
@@ -155,7 +146,7 @@ async function accessToken(): Promise<string> {
   let oidc = env("VERCEL_OIDC_TOKEN");
   if (!oidc && (env("VERCEL") === "1" || env("VERCEL_ENV"))) {
     try {
-      oidc = (await getVercelOidcToken({ audience: providerAudience() }))?.trim() ?? "";
+      oidc = (await getVercelOidcToken({ audience: GOOGLE_ADS_WIF.expectedVercelAudience }))?.trim() ?? "";
     } catch (e) {
       const detail = e instanceof Error ? e.message : "unknown error";
       throw new Error(`Vercel OIDC token unavailable: ${detail}`);
