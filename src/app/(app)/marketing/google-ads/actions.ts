@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import { headers } from "next/headers";
 import { requireRole } from "@/lib/auth";
 import { processQueue, ensureConversionForBooking } from "@/lib/conversions";
 import { supabaseServer } from "@/lib/supabase/server";
@@ -10,12 +11,25 @@ import { prepareGoogleAdsRuntime } from "@/lib/google-ads-runtime";
 
 const s = (fd: FormData, k: string) => String(fd.get(k) ?? "").trim();
 
+/**
+ * Vercel supplies its OIDC token to Functions on the request header, not as a
+ * runtime environment variable. Copy it only into this short-lived function
+ * process so the existing Google auth module can exchange it with Google STS.
+ * The token is never logged, stored in the database, or returned to the browser.
+ */
+function hydrateVercelOidcFromRequest() {
+  const token = headers().get("x-vercel-oidc-token")?.trim() ?? "";
+  if (token) process.env.VERCEL_OIDC_TOKEN = token;
+  return token;
+}
+
 function back(message: string, kind: "error" | "ok" = "error"): never {
   redirect(`/marketing/google-ads?${kind}=${encodeURIComponent(message)}`);
 }
 
 export async function retryConversions(formData: FormData) {
   await requireRole("owner");
+  hydrateVercelOidcFromRequest();
   const supabase = supabaseServer();
 
   const prepared = await prepareGoogleAdsRuntime(supabase);
@@ -38,6 +52,7 @@ export async function retryConversions(formData: FormData) {
 
 export async function validateConversions() {
   await requireRole("owner");
+  hydrateVercelOidcFromRequest();
   const supabase = supabaseServer();
 
   const prepared = await prepareGoogleAdsRuntime(supabase);
@@ -72,6 +87,7 @@ export async function backfillConversions() {
 
 export async function toggleSync(formData: FormData) {
   await requireRole("owner");
+  hydrateVercelOidcFromRequest();
   const supabase = supabaseServer();
   const enabled = s(formData, "enabled") === "true";
 
@@ -93,9 +109,8 @@ export async function toggleSync(formData: FormData) {
 /**
  * Import a Google service-account JSON key into Supabase Vault.
  *
- * The browser posts the JSON directly to this authenticated owner-only server
- * action. Only project_id, client_email and private_key are extracted; the raw
- * JSON is not written to logs, settings, GitHub, or returned to the browser.
+ * Retained only as a legacy fallback for non-Vercel environments. Production
+ * uses Vercel OIDC + Google Workload Identity Federation and needs no key.
  */
 export async function saveGoogleAdsServiceAccount(formData: FormData) {
   await requireRole("owner");
