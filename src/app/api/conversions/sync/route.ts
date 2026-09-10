@@ -12,6 +12,7 @@
 
 import { NextResponse } from "next/server";
 import { serviceClient, processQueue } from "@/lib/conversions";
+import { prepareGoogleAdsRuntime } from "@/lib/google-ads-runtime";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -29,6 +30,11 @@ async function run(req: Request) {
   const supabase = serviceClient();
   if (!supabase) {
     return NextResponse.json({ error: "Server credentials are not configured." }, { status: 503 });
+  }
+
+  const prepared = await prepareGoogleAdsRuntime(supabase);
+  if (!prepared.ok) {
+    return NextResponse.json({ error: prepared.reason }, { status: 503 });
   }
 
   const url = new URL(req.url);
