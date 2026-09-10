@@ -14,14 +14,6 @@ function back(message: string, kind: "error" | "ok" = "error"): never {
   redirect(`/marketing/google-ads?${kind}=${encodeURIComponent(message)}`);
 }
 
-/**
- * Retry one conversion, or everything that is due.
- *
- * Owner actions intentionally use the signed-in Supabase session rather than
- * a service-role key. Row Level Security already grants the owner full access
- * to the conversion queue, so a missing server bypass key must not block a
- * legitimate interactive sync.
- */
 export async function retryConversions(formData: FormData) {
   await requireRole("owner");
   const supabase = supabaseServer();
@@ -44,10 +36,6 @@ export async function retryConversions(formData: FormData) {
   back(result.note, result.failed && !result.synced ? "error" : "ok");
 }
 
-/**
- * Send nothing, but ask Google whether it would accept what is queued.
- * The safe way to prove the integration before a real conversion is reported.
- */
 export async function validateConversions() {
   await requireRole("owner");
   const supabase = supabaseServer();
@@ -60,11 +48,6 @@ export async function validateConversions() {
   back(`Validation run: ${result.note}. Nothing was reported to Google.`, result.failed ? "error" : "ok");
 }
 
-/**
- * Create any conversions that should exist but do not — bookings confirmed
- * before this module was installed, or while conversion sending was unavailable.
- * Idempotent by the same dedup key as everything else.
- */
 export async function backfillConversions() {
   await requireRole("owner");
   const supabase = supabaseServer();
@@ -87,7 +70,6 @@ export async function backfillConversions() {
   back(`Checked ${confirmed?.length ?? 0} confirmed bookings; ${created} conversion records created or updated.`, "ok");
 }
 
-/** The master switch, stored in settings so it survives a redeploy. */
 export async function toggleSync(formData: FormData) {
   await requireRole("owner");
   const supabase = supabaseServer();
@@ -112,8 +94,8 @@ export async function toggleSync(formData: FormData) {
  * Import a Google service-account JSON key into Supabase Vault.
  *
  * The browser posts the JSON directly to this authenticated owner-only server
- * action. Only client_email and private_key are extracted; the raw JSON is not
- * written to logs, settings, GitHub, or returned to the browser.
+ * action. Only project_id, client_email and private_key are extracted; the raw
+ * JSON is not written to logs, settings, GitHub, or returned to the browser.
  */
 export async function saveGoogleAdsServiceAccount(formData: FormData) {
   await requireRole("owner");
@@ -130,14 +112,16 @@ export async function saveGoogleAdsServiceAccount(formData: FormData) {
   if (parsed.type !== "service_account") {
     back("This must be a Google service-account JSON key (type: service_account).");
   }
+  const projectId = typeof parsed.project_id === "string" ? parsed.project_id.trim() : "";
   const clientEmail = typeof parsed.client_email === "string" ? parsed.client_email.trim() : "";
   const privateKey = typeof parsed.private_key === "string" ? parsed.private_key : "";
-  if (!clientEmail || !privateKey) {
-    back("The JSON is missing client_email or private_key.");
+  if (!projectId || !clientEmail || !privateKey) {
+    back("The JSON is missing project_id, client_email or private_key.");
   }
 
   const supabase = supabaseServer();
   const { error } = await supabase.rpc("set_google_ads_service_account", {
+    p_project_id: projectId,
     p_client_email: clientEmail,
     p_private_key: privateKey,
   });
