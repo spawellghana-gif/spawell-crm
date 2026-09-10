@@ -8,6 +8,7 @@
  */
 
 import { createHash, createSign } from "node:crypto";
+import { getVercelOidcToken } from "@vercel/oidc";
 
 const INGEST_URL = "https://datamanager.googleapis.com/v1/events:ingest";
 const SCOPE = "https://www.googleapis.com/auth/datamanager";
@@ -54,7 +55,12 @@ export function googleAdsConfig(): GoogleAdsConfig {
 }
 
 export function googleAdsAuthMode(): GoogleAdsAuthMode {
-  if (env("VERCEL_OIDC_TOKEN")) return "vercel_oidc";
+  // On Vercel, the token is request-scoped and @vercel/oidc resolves it lazily.
+  // VERCEL/VERCEL_ENV are enough for the synchronous configuration guard to
+  // know that the keyless auth mechanism is available in principle.
+  if (env("VERCEL") === "1" || env("VERCEL_ENV") || env("VERCEL_OIDC_TOKEN")) {
+    return "vercel_oidc";
+  }
   const c = googleAdsConfig();
   if (c.clientEmail && c.privateKey) return "service_account_key";
   return "none";
@@ -210,7 +216,15 @@ async function accessToken(): Promise<string> {
     return cachedToken.value;
   }
 
-  const oidc = env("VERCEL_OIDC_TOKEN");
+  let oidc = env("VERCEL_OIDC_TOKEN");
+  if (!oidc && (env("VERCEL") === "1" || env("VERCEL_ENV"))) {
+    try {
+      oidc = (await getVercelOidcToken())?.trim() ?? "";
+    } catch (e) {
+      const detail = e instanceof Error ? e.message : "unknown error";
+      throw new Error(`Vercel OIDC token unavailable: ${detail}`);
+    }
+  }
   if (oidc) {
     cachedToken = await oidcAccessToken(oidc);
     return cachedToken.value;
