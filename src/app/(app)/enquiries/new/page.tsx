@@ -3,6 +3,7 @@ import { requireRole } from "@/lib/auth";
 import { supabaseServer } from "@/lib/supabase/server";
 import { Card, Field, PageHead, ErrorNote } from "@/components/ui";
 import { createEnquiry } from "../actions";
+import { ReturningClient } from "./returning-client";
 
 export const dynamic = "force-dynamic";
 
@@ -42,11 +43,12 @@ export default async function NewEnquiryPage({
               </Field>
               <Field label="WhatsApp" name="whatsapp">
                 <label className="row" style={{ fontSize: 12.5, marginBottom: 4 }}>
-                  <input type="checkbox" name="same_whatsapp" defaultChecked /> Same as phone
+                  <input id="same_whatsapp" type="checkbox" name="same_whatsapp" defaultChecked /> Same as phone
                 </label>
                 <input className="inp" id="whatsapp" name="whatsapp" placeholder="Only if different" />
               </Field>
             </div>
+            <ReturningClient />
           </div>
 
           <div className="fsec">

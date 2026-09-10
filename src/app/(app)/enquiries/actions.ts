@@ -3,12 +3,56 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { supabaseServer } from "@/lib/supabase/server";
-import { requireUser } from "@/lib/auth";
+import { requireRole, requireUser } from "@/lib/auth";
 import { normalisePhone, toPesewas } from "@/lib/format";
 import { sendBookingToGa4, ga4SendConfigured } from "@/lib/ga4";
 import { attributionSchemaReady, claimAttribution, markClickClaimed } from "@/lib/claim-attribution";
 
 const s = (fd: FormData, k: string) => String(fd.get(k) ?? "").trim();
+
+export type ReturningClientMatch = {
+  id: string;
+  fullName: string;
+  phone: string;
+  whatsapp: string;
+  locationType: "home" | "hotel";
+  area: string;
+  address: string;
+  landmark: string;
+  completedBookings: number;
+  lifetimeCollectedPesewas: number;
+  lastVisitAt: string | null;
+};
+
+/** Look up a returning client while an officer is capturing an enquiry. */
+export async function findReturningClient(rawPhone: string): Promise<ReturningClientMatch | null> {
+  await requireRole("owner", "officer");
+  const phone = normalisePhone(rawPhone);
+  // Avoid querying partial numbers as the officer types.
+  if (!/^\+\d{10,15}$/.test(phone)) return null;
+
+  const { data, error } = await supabaseServer()
+    .from("client_view")
+    .select("id, full_name, phone_e164, whatsapp_e164, location_type, area, address, landmark, completed_bookings, lifetime_collected_pesewas, last_visit_at")
+    .eq("phone_e164", phone)
+    .is("archived_at", null)
+    .maybeSingle();
+
+  if (error || !data) return null;
+  return {
+    id: data.id,
+    fullName: data.full_name,
+    phone: data.phone_e164,
+    whatsapp: data.whatsapp_e164,
+    locationType: data.location_type,
+    area: data.area,
+    address: data.address,
+    landmark: data.landmark,
+    completedBookings: Number(data.completed_bookings) || 0,
+    lifetimeCollectedPesewas: Number(data.lifetime_collected_pesewas) || 0,
+    lastVisitAt: data.last_visit_at,
+  };
+}
 
 /** Capture a new enquiry. Links to an existing client when the phone matches. */
 export async function createEnquiry(formData: FormData) {
@@ -17,7 +61,7 @@ export async function createEnquiry(formData: FormData) {
   const phone = normalisePhone(s(formData, "phone"));
 
   const { data: existing } = await supabase
-    .from("client").select("id").eq("phone_e164", phone).maybeSingle();
+    .from("client").select("id").eq("phone_e164", phone).is("archived_at", null).maybeSingle();
 
   // Advertising attribution, if the customer carried a ref through WhatsApp.
   // Nothing is guessed here: an absent or unknown ref leaves the enquiry
@@ -62,6 +106,22 @@ export async function createEnquiry(formData: FormData) {
   // Stamp the click as used, after the enquiry exists. Failing here costs the
   // claimed flag, never the enquiry.
   await markClickClaimed(supabase, attribution.ad_click_id, data!.id);
+
+  // Refresh practical details only when the officer explicitly asks. The
+  // original source and first campaign stay untouched as first-touch history.
+  if (existing?.id && formData.get("update_client_profile")) {
+    const { error: updateError } = await supabase.from("client").update({
+      full_name: s(formData, "full_name"),
+      whatsapp_e164: formData.get("same_whatsapp") ? phone : normalisePhone(s(formData, "whatsapp")),
+      location_type: s(formData, "location_type") || "home",
+      area: s(formData, "area"),
+      address: s(formData, "address"),
+      landmark: s(formData, "landmark"),
+    }).eq("id", existing.id);
+    if (updateError) {
+      redirect(`/enquiries/${data!.id}?error=${encodeURIComponent("Enquiry saved, but the client profile could not be refreshed.")}`);
+    }
+  }
 
   revalidatePath("/enquiries");
   redirect(`/enquiries/${data!.id}`);
@@ -130,7 +190,7 @@ export async function convertToBooking(formData: FormData) {
   let clientId = e.client_id as string | null;
   if (!clientId) {
     const { data: found } = await supabase
-      .from("client").select("id").eq("phone_e164", e.phone_e164).maybeSingle();
+      .from("client").select("id").eq("phone_e164", e.phone_e164).is("archived_at", null).maybeSingle();
     if (found) clientId = found.id;
     else {
       const { data: created, error: cErr } = await supabase
