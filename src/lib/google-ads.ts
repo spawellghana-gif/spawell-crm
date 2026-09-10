@@ -146,7 +146,7 @@ async function accessToken(): Promise<string> {
   let oidc = env("VERCEL_OIDC_TOKEN");
   if (!oidc && (env("VERCEL") === "1" || env("VERCEL_ENV"))) {
     try {
-      oidc = (await getVercelOidcToken({ audience: GOOGLE_ADS_WIF.expectedVercelAudience }))?.trim() ?? "";
+      oidc = (await getVercelOidcToken())?.trim() ?? "";
     } catch (e) {
       const detail = e instanceof Error ? e.message : "unknown error";
       throw new Error(`Vercel OIDC token unavailable: ${detail}`);
