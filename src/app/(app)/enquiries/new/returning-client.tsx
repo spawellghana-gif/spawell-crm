@@ -19,24 +19,39 @@ function setCheckbox(id: string, checked: boolean) {
   element.dispatchEvent(new Event("change", { bubbles: true }));
 }
 
-export function ReturningClient({ phoneInputId = "phone" }: { phoneInputId?: string }) {
+export function ReturningClient({
+  phoneInputId = "phone",
+  usernameInputId = "whatsapp_username",
+}: {
+  phoneInputId?: string;
+  usernameInputId?: string;
+}) {
   const [phone, setPhone] = useState("");
+  const [username, setUsername] = useState("");
   const [match, setMatch] = useState<ReturningClientMatch | null>(null);
   const [checked, setChecked] = useState(false);
   const [lookupState, setLookupState] = useState<"idle" | "checking" | "done" | "error">("idle");
 
   useEffect(() => {
-    const input = document.getElementById(phoneInputId) as HTMLInputElement | null;
-    if (!input) return;
-    const onInput = () => setPhone(input.value);
-    input.addEventListener("input", onInput);
-    return () => input.removeEventListener("input", onInput);
-  }, [phoneInputId]);
+    const phoneInput = document.getElementById(phoneInputId) as HTMLInputElement | null;
+    const usernameInput = document.getElementById(usernameInputId) as HTMLInputElement | null;
+    const onPhone = () => setPhone(phoneInput?.value ?? "");
+    const onUsername = () => setUsername(usernameInput?.value ?? "");
+    phoneInput?.addEventListener("input", onPhone);
+    usernameInput?.addEventListener("input", onUsername);
+    return () => {
+      phoneInput?.removeEventListener("input", onPhone);
+      usernameInput?.removeEventListener("input", onUsername);
+    };
+  }, [phoneInputId, usernameInputId]);
+
+  const hasPhone = phone.replace(/\D/g, "").length >= 9;
+  const hasUsername = username.trim().replace(/^@+/, "").length > 0;
 
   useEffect(() => {
     setMatch(null);
     setChecked(false);
-    if (phone.replace(/\D/g, "").length < 9) {
+    if (!hasPhone && !hasUsername) {
       setLookupState("idle");
       return;
     }
@@ -44,7 +59,7 @@ export function ReturningClient({ phoneInputId = "phone" }: { phoneInputId?: str
     let active = true;
     const timer = window.setTimeout(async () => {
       try {
-        const result = await findReturningClient(phone);
+        const result = await findReturningClient(hasPhone ? phone : "", username);
         if (active) {
           setMatch(result);
           setLookupState("done");
@@ -57,16 +72,18 @@ export function ReturningClient({ phoneInputId = "phone" }: { phoneInputId?: str
       active = false;
       window.clearTimeout(timer);
     };
-  }, [phone]);
+  }, [phone, username, hasPhone, hasUsername]);
 
-  if (phone.replace(/\D/g, "").length < 9) return null;
+  if (!hasPhone && !hasUsername) return null;
   if (lookupState === "checking") return <p className="note" role="status">Checking client records…</p>;
-  if (lookupState === "error") return <p className="note" role="alert">Client lookup failed. Check the phone or try again.</p>;
+  if (lookupState === "error") return <p className="note" role="alert">Client lookup failed. Check the phone or WhatsApp username and try again.</p>;
   if (!match) return <p className="note">No existing client found. This will become a new client when booked.</p>;
 
   const useSavedDetails = () => {
-    const sameWhatsApp = !match.whatsapp || match.whatsapp === match.phone;
+    const sameWhatsApp = Boolean(match.phone) && (!match.whatsapp || match.whatsapp === match.phone);
     setValue("full_name", match.fullName);
+    setValue("phone", match.phone);
+    setValue("whatsapp_username", match.whatsappUsername ? `@${match.whatsappUsername}` : "");
     setCheckbox("same_whatsapp", sameWhatsApp);
     setValue("whatsapp", sameWhatsApp ? "" : match.whatsapp);
     setValue("location_type", match.locationType);
@@ -87,6 +104,7 @@ export function ReturningClient({ phoneInputId = "phone" }: { phoneInputId?: str
           <div style={{ marginTop: 4 }}>
             {match.completedBookings} completed · {lifetime} lifetime · Last visit: {lastVisit}
           </div>
+          {match.whatsappUsername && <div className="note" style={{ marginTop: 3 }}>WhatsApp @{match.whatsappUsername}</div>}
         </div>
         <div className="row">
           <button className="btn" type="button" onClick={useSavedDetails}>Use saved details</button>
@@ -100,7 +118,7 @@ export function ReturningClient({ phoneInputId = "phone" }: { phoneInputId?: str
           checked={checked}
           onChange={(event) => setChecked(event.target.checked)}
         />
-        Save the name, WhatsApp and location entered here as this client’s latest details
+        Save the name, contact details and location entered here as this client’s latest details
       </label>
       <div className="note" style={{ marginTop: 5 }}>Their original lead source and first campaign will remain unchanged.</div>
     </div>
