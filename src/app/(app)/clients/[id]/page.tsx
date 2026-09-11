@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireRole } from "@/lib/auth";
 import { supabaseServer } from "@/lib/supabase/server";
-import { ghs, ghsShort, prettyPhone, fmtDate, fmtDateTime, waLink, titleise } from "@/lib/format";
+import { ghs, ghsShort, prettyPhone, prettyWhatsAppUsername, fmtDate, fmtDateTime, waLink, titleise } from "@/lib/format";
 import { Card, Empty, PageHead, Kpi, BookingChip, Chip, ErrorNote } from "@/components/ui";
 import { DangerZone } from "@/components/danger-zone";
 import type { BookingView } from "@/lib/types";
@@ -23,6 +23,7 @@ export default async function ClientDetail({
     supabase.from("enquiry_view").select("*").eq("client_id", c.id).order("created_at", { ascending: false }),
   ]);
   const rows = (bookings ?? []) as BookingView[];
+  const whatsappNumber = c.whatsapp_e164 || c.phone_e164;
 
   return (
     <>
@@ -31,8 +32,10 @@ export default async function ClientDetail({
         blurb={`${c.area}${c.address ? ` · ${c.address}` : ""}`}
         actions={
           <>
-            <a className="btn pri" href={waLink(c.whatsapp_e164 || c.phone_e164, `Hello ${c.full_name.split(" ")[0]}, this is SpaWellGhana. `)}
-               target="_blank" rel="noopener noreferrer">Open in WhatsApp ↗</a>
+            {whatsappNumber && (
+              <a className="btn pri" href={waLink(whatsappNumber, `Hello ${c.full_name.split(" ")[0]}, this is SpaWellGhana. `)}
+                 target="_blank" rel="noopener noreferrer">Open in WhatsApp ↗</a>
+            )}
             <Link className="btn" href="/clients">Back</Link>
           </>
         }
@@ -49,6 +52,7 @@ export default async function ClientDetail({
         <Card title="Details">
           <dl className="meta">
             <dt>Phone</dt><dd className="mono">{prettyPhone(c.phone_e164)}</dd>
+            <dt>WhatsApp username</dt><dd className="mono">{prettyWhatsAppUsername(c.whatsapp_username)}</dd>
             <dt>Preferred contact</dt><dd>{c.pref_contact}</dd>
             <dt>Usual location</dt><dd>{titleise(c.location_type)} · {c.area}<div className="note">{c.address}{c.landmark ? ` · ${c.landmark}` : ""}</div></dd>
             <dt>First touch</dt><dd>{titleise(c.source)}{c.first_campaign ? ` · ${c.first_campaign}` : ""}</dd>
