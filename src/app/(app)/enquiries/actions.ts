@@ -4,17 +4,19 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { supabaseServer } from "@/lib/supabase/server";
 import { requireRole, requireUser } from "@/lib/auth";
-import { normalisePhone, toPesewas } from "@/lib/format";
+import { normalisePhone, normaliseWhatsAppUsername, toPesewas } from "@/lib/format";
 import { sendBookingToGa4, ga4SendConfigured } from "@/lib/ga4";
 import { attributionSchemaReady, claimAttribution, markClickClaimed } from "@/lib/claim-attribution";
 
 const s = (fd: FormData, k: string) => String(fd.get(k) ?? "").trim();
+const validPhone = (phone: string) => /^\+\d{10,15}$/.test(phone);
 
 export type ReturningClientMatch = {
   id: string;
   fullName: string;
   phone: string;
   whatsapp: string;
+  whatsappUsername: string;
   locationType: "home" | "hotel";
   area: string;
   address: string;
@@ -24,17 +26,63 @@ export type ReturningClientMatch = {
   lastVisitAt: string | null;
 };
 
+/**
+ * Resolve a client through either stable contact identifier.
+ *
+ * If the phone and username point at two different records, never guess which
+ * person is correct. That is a data-quality conflict and must be resolved by a
+ * staff member before the enquiry can be attached or converted.
+ */
+async function existingClientId(phone: string, whatsappUsername: string): Promise<string | null> {
+  const supabase = supabaseServer();
+  let phoneId: string | null = null;
+  let usernameId: string | null = null;
+
+  if (phone) {
+    const { data, error } = await supabase
+      .from("client").select("id").eq("phone_e164", phone).is("archived_at", null).maybeSingle();
+    if (error) throw new Error(error.message);
+    phoneId = data?.id ?? null;
+  }
+
+  if (whatsappUsername) {
+    const { data, error } = await supabase
+      .from("client").select("id").eq("whatsapp_username", whatsappUsername).is("archived_at", null).maybeSingle();
+    if (error) throw new Error(error.message);
+    usernameId = data?.id ?? null;
+  }
+
+  if (phoneId && usernameId && phoneId !== usernameId) {
+    throw new Error(
+      "The phone number and WhatsApp username belong to different client profiles. Resolve the duplicate before continuing.",
+    );
+  }
+  return phoneId ?? usernameId;
+}
+
 /** Look up a returning client while an officer is capturing an enquiry. */
-export async function findReturningClient(rawPhone: string): Promise<ReturningClientMatch | null> {
+export async function findReturningClient(
+  rawPhone: string,
+  rawWhatsappUsername = "",
+): Promise<ReturningClientMatch | null> {
   await requireRole("owner", "officer");
   const phone = normalisePhone(rawPhone);
-  // Avoid querying partial numbers as the officer types.
-  if (!/^\+\d{10,15}$/.test(phone)) return null;
+  const whatsappUsername = normaliseWhatsAppUsername(rawWhatsappUsername);
+  const usablePhone = validPhone(phone) ? phone : "";
+  if (!usablePhone && !whatsappUsername) return null;
+
+  let clientId: string | null = null;
+  try {
+    clientId = await existingClientId(usablePhone, whatsappUsername);
+  } catch {
+    return null;
+  }
+  if (!clientId) return null;
 
   const { data, error } = await supabaseServer()
     .from("client_view")
-    .select("id, full_name, phone_e164, whatsapp_e164, location_type, area, address, landmark, completed_bookings, lifetime_collected_pesewas, last_visit_at")
-    .eq("phone_e164", phone)
+    .select("id, full_name, phone_e164, whatsapp_e164, whatsapp_username, location_type, area, address, landmark, completed_bookings, lifetime_collected_pesewas, last_visit_at")
+    .eq("id", clientId)
     .is("archived_at", null)
     .maybeSingle();
 
@@ -44,6 +92,7 @@ export async function findReturningClient(rawPhone: string): Promise<ReturningCl
     fullName: data.full_name,
     phone: data.phone_e164,
     whatsapp: data.whatsapp_e164,
+    whatsappUsername: data.whatsapp_username,
     locationType: data.location_type,
     area: data.area,
     address: data.address,
@@ -54,14 +103,35 @@ export async function findReturningClient(rawPhone: string): Promise<ReturningCl
   };
 }
 
-/** Capture a new enquiry. Links to an existing client when the phone matches. */
+/** Capture a new enquiry. Links to an existing client by phone or WhatsApp username. */
 export async function createEnquiry(formData: FormData) {
   const user = await requireUser();
   const supabase = supabaseServer();
-  const phone = normalisePhone(s(formData, "phone"));
+  const rawPhone = s(formData, "phone");
+  const phone = normalisePhone(rawPhone);
+  const whatsappUsername = normaliseWhatsAppUsername(s(formData, "whatsapp_username"));
+  const rawWhatsapp = s(formData, "whatsapp");
+  const whatsapp = formData.get("same_whatsapp") ? phone : normalisePhone(rawWhatsapp);
 
-  const { data: existing } = await supabase
-    .from("client").select("id").eq("phone_e164", phone).is("archived_at", null).maybeSingle();
+  if (rawPhone && !validPhone(phone)) {
+    redirect(`/enquiries/new?error=${encodeURIComponent("Enter a valid phone number, or leave it blank and use the WhatsApp username.")}`);
+  }
+  if (rawWhatsapp && !validPhone(whatsapp)) {
+    redirect(`/enquiries/new?error=${encodeURIComponent("Enter a valid WhatsApp number or leave it blank.")}`);
+  }
+  if (whatsappUsername.includes(" ")) {
+    redirect(`/enquiries/new?error=${encodeURIComponent("WhatsApp username cannot contain spaces.")}`);
+  }
+  if (!phone && !whatsappUsername) {
+    redirect(`/enquiries/new?error=${encodeURIComponent("Enter a phone number or WhatsApp username so the client can be identified.")}`);
+  }
+
+  let existingId: string | null = null;
+  try {
+    existingId = await existingClientId(phone, whatsappUsername);
+  } catch (e) {
+    redirect(`/enquiries/new?error=${encodeURIComponent(e instanceof Error ? e.message : "Could not match this client.")}`);
+  }
 
   // Advertising attribution, if the customer carried a ref through WhatsApp.
   // Nothing is guessed here: an absent or unknown ref leaves the enquiry
@@ -78,7 +148,8 @@ export async function createEnquiry(formData: FormData) {
     .insert({
       full_name: s(formData, "full_name"),
       phone_e164: phone,
-      whatsapp_e164: formData.get("same_whatsapp") ? phone : normalisePhone(s(formData, "whatsapp")),
+      whatsapp_e164: whatsapp,
+      whatsapp_username: whatsappUsername,
       channel: s(formData, "channel") || "whatsapp",
       source: claimedSource || s(formData, "source") || "direct_unknown",
       campaign: claimedCampaign || s(formData, "campaign"),
@@ -93,7 +164,7 @@ export async function createEnquiry(formData: FormData) {
       guests: Number(formData.get("guests")) || 1,
       quote_pesewas: toPesewas(s(formData, "quote")),
       notes: s(formData, "notes"),
-      client_id: existing?.id ?? null,
+      client_id: existingId,
       ...(hasAttribution ? attribution : {}),
       owner_id: user.id,
       status: "new",
@@ -109,15 +180,19 @@ export async function createEnquiry(formData: FormData) {
 
   // Refresh practical details only when the officer explicitly asks. The
   // original source and first campaign stay untouched as first-touch history.
-  if (existing?.id && formData.get("update_client_profile")) {
-    const { error: updateError } = await supabase.from("client").update({
+  if (existingId && formData.get("update_client_profile")) {
+    const clientPatch: Record<string, unknown> = {
       full_name: s(formData, "full_name"),
-      whatsapp_e164: formData.get("same_whatsapp") ? phone : normalisePhone(s(formData, "whatsapp")),
       location_type: s(formData, "location_type") || "home",
       area: s(formData, "area"),
       address: s(formData, "address"),
       landmark: s(formData, "landmark"),
-    }).eq("id", existing.id);
+    };
+    if (phone) clientPatch.phone_e164 = phone;
+    if (whatsapp) clientPatch.whatsapp_e164 = whatsapp;
+    if (whatsappUsername) clientPatch.whatsapp_username = whatsappUsername;
+
+    const { error: updateError } = await supabase.from("client").update(clientPatch).eq("id", existingId);
     if (updateError) {
       redirect(`/enquiries/${data!.id}?error=${encodeURIComponent("Enquiry saved, but the client profile could not be refreshed.")}`);
     }
@@ -202,15 +277,20 @@ export async function convertToBooking(formData: FormData) {
   // 1. client
   let clientId = e.client_id as string | null;
   if (!clientId) {
-    const { data: found } = await supabase
-      .from("client").select("id").eq("phone_e164", e.phone_e164).is("archived_at", null).maybeSingle();
-    if (found) clientId = found.id;
-    else {
+    try {
+      clientId = await existingClientId(e.phone_e164 ?? "", e.whatsapp_username ?? "");
+    } catch (matchError) {
+      redirect(`/enquiries/${enquiryId}?error=${encodeURIComponent(matchError instanceof Error ? matchError.message : "Could not match this client.")}`);
+    }
+
+    if (!clientId) {
       const { data: created, error: cErr } = await supabase
         .from("client")
         .insert({
-          full_name: e.full_name, phone_e164: e.phone_e164,
-          whatsapp_e164: e.whatsapp_e164 || e.phone_e164,
+          full_name: e.full_name,
+          phone_e164: e.phone_e164 ?? "",
+          whatsapp_e164: e.whatsapp_e164 || e.phone_e164 || "",
+          whatsapp_username: e.whatsapp_username ?? "",
           location_type: e.location_type, area: e.area, address: e.address,
           landmark: e.landmark, source: e.source, first_campaign: e.campaign,
           pref_service_id: serviceId,
