@@ -25,7 +25,7 @@ export default async function NewEnquiryPage({
     <>
       <PageHead
         title="New enquiry"
-        blurb="Capture what the client asked for. Anything you do not know yet can be filled in later."
+        blurb="Capture what the client asked for. A phone number is no longer required when WhatsApp provides a username."
         actions={<Link className="btn" href="/enquiries">Cancel</Link>}
       />
       <ErrorNote message={searchParams.error} />
@@ -38,10 +38,14 @@ export default async function NewEnquiryPage({
               <Field label="Name" name="full_name">
                 <input className="inp" id="full_name" name="full_name" required placeholder="Akosua Frimpong" />
               </Field>
-              <Field label="Phone" name="phone" hint="Local or +233 format — stored as +233…">
-                <input className="inp" id="phone" name="phone" required placeholder="024 401 0101" />
+              <Field label="Phone (optional)" name="phone" hint="Use when known. Phone or WhatsApp username is required.">
+                <input className="inp" id="phone" name="phone" placeholder="024 401 0101" />
               </Field>
-              <Field label="WhatsApp" name="whatsapp">
+              <Field label="WhatsApp username" name="whatsapp_username"
+                     hint="Use this when WhatsApp identifies the client by username instead of revealing a number.">
+                <input className="inp" id="whatsapp_username" name="whatsapp_username" placeholder="@akosua" autoComplete="off" />
+              </Field>
+              <Field label="WhatsApp number (optional)" name="whatsapp">
                 <label className="row" style={{ fontSize: 12.5, marginBottom: 4 }}>
                   <input id="same_whatsapp" type="checkbox" name="same_whatsapp" defaultChecked /> Same as phone
                 </label>
