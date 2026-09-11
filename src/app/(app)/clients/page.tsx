@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { requireRole } from "@/lib/auth";
 import { supabaseServer } from "@/lib/supabase/server";
-import { ghsShort, prettyPhone, fmtDate, titleise } from "@/lib/format";
+import { ghsShort, prettyPhone, prettyWhatsAppUsername, fmtDate, titleise } from "@/lib/format";
 import { Card, Empty, PageHead, Chip } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
@@ -10,15 +10,18 @@ export default async function ClientsPage({ searchParams }: { searchParams: { q?
   await requireRole("owner", "officer");
   const supabase = supabaseServer();
   let query = supabase.from("client_view").select("*").is("archived_at", null);
-  if (searchParams.q) query = query.or(`full_name.ilike.%${searchParams.q}%,phone_e164.ilike.%${searchParams.q}%,area.ilike.%${searchParams.q}%`);
+  if (searchParams.q) {
+    const q = searchParams.q.trim().replace(/^@/, "");
+    query = query.or(`full_name.ilike.%${q}%,phone_e164.ilike.%${q}%,whatsapp_username.ilike.%${q}%,area.ilike.%${q}%`);
+  }
   const { data } = await query.order("full_name").limit(300);
   const rows = data ?? [];
 
   return (
     <>
-      <PageHead title="Clients" blurb="One record per person, keyed on the phone number so the same client cannot be created twice." />
+      <PageHead title="Clients" blurb="One record per person, matched by phone number or WhatsApp username so returning clients keep one history." />
       <form className="row" style={{ marginBottom: 12 }}>
-        <input className="inp" name="q" defaultValue={searchParams.q ?? ""} placeholder="Name, phone or area" style={{ maxWidth: 280 }} />
+        <input className="inp" name="q" defaultValue={searchParams.q ?? ""} placeholder="Name, phone, username or area" style={{ maxWidth: 300 }} />
         <button className="btn" type="submit">Search</button>
         <Link className="btn" href="/clients">Clear</Link>
       </form>
@@ -26,14 +29,17 @@ export default async function ClientsPage({ searchParams }: { searchParams: { q?
         <div className="tablewrap">
           <table>
             <thead><tr>
-              <th>Client</th><th>Phone</th><th>Area</th><th>Source</th>
+              <th>Client</th><th>Contact</th><th>Area</th><th>Source</th>
               <th className="r">Completed</th><th className="r">Lifetime</th><th>Last visit</th><th>Opt-in</th>
             </tr></thead>
             <tbody>
               {rows.map((c) => (
                 <tr key={c.id}>
                   <td><Link href={`/clients/${c.id}`}><b>{c.full_name}</b></Link></td>
-                  <td className="mono">{prettyPhone(c.phone_e164)}</td>
+                  <td className="mono">
+                    {prettyPhone(c.phone_e164)}
+                    {c.whatsapp_username && <div className="note mono">{prettyWhatsAppUsername(c.whatsapp_username)}</div>}
+                  </td>
                   <td>{c.area}</td>
                   <td>{titleise(c.source)}</td>
                   <td className="r num">{c.completed_bookings}</td>
