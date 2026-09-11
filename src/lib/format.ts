@@ -53,22 +53,37 @@ export function addDays(isoDate: string, n: number): string {
 /**
  * Ghana numbers into E.164. "024 401 0101" and "+233 24 401 0101" and
  * "244010101" all land on "+233244010101" so duplicate detection works and
- * wa.me links are valid.
+ * wa.me links are valid. An unknown number stays blank rather than becoming
+ * "+", because WhatsApp can now identify a client by username alone.
  */
-export function normalisePhone(raw: string): string {
+export function normalisePhone(raw: string | null | undefined): string {
   let d = (raw ?? "").replace(/[^\d+]/g, "");
+  if (!d) return "";
   if (d.startsWith("+")) d = d.slice(1);
   if (d.startsWith("00")) d = d.slice(2);
+  if (!d) return "";
   if (d.startsWith("0")) d = "233" + d.slice(1);
   if (!d.startsWith("233") && d.length === 9) d = "233" + d;
   return "+" + d;
 }
 
-export function prettyPhone(raw: string): string {
-  const d = normalisePhone(raw).replace("+", "");
+export function prettyPhone(raw: string | null | undefined): string {
+  const normalised = normalisePhone(raw);
+  if (!normalised) return "—";
+  const d = normalised.replace("+", "");
   return d.startsWith("233")
     ? `+233 ${d.slice(3, 5)} ${d.slice(5, 8)} ${d.slice(8)}`
     : "+" + d;
+}
+
+/** Store WhatsApp usernames without the display @ and compare case-insensitively. */
+export function normaliseWhatsAppUsername(raw: string | null | undefined): string {
+  return (raw ?? "").trim().replace(/^@+/, "").toLowerCase();
+}
+
+export function prettyWhatsAppUsername(raw: string | null | undefined): string {
+  const username = normaliseWhatsAppUsername(raw);
+  return username ? `@${username}` : "—";
 }
 
 export function waLink(phone: string, message: string): string {
