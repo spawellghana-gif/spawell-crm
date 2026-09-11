@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import { requireUser, isStaff } from "@/lib/auth";
 import { supabaseServer } from "@/lib/supabase/server";
 import {
-  fmtDate, fmtDateTime, fmtTime, ghs, prettyPhone, waLink, fillTemplate, titleise,
+  fmtDate, fmtDateTime, fmtTime, ghs, prettyPhone, prettyWhatsAppUsername, waLink, fillTemplate, titleise,
 } from "@/lib/format";
 import { Card, Field, PageHead, BookingChip, Empty, ErrorNote, Chip } from "@/components/ui";
 import {
@@ -78,6 +78,7 @@ export default async function BookingDetail({
     area: b.area, location: b.location_type === "hotel" ? "hotel" : "home",
     balance: ghs(b.balance_pesewas), booking: b.ref,
   };
+  const whatsappNumber = b.client_whatsapp || b.client_phone;
 
   return (
     <>
@@ -127,7 +128,11 @@ export default async function BookingDetail({
             <dd>{b.location_type === "hotel" ? `${b.hotel_name} · room ${b.room_no}` : b.address || b.area}
               <div className="note">{b.area}, {b.city}{b.landmark ? ` · ${b.landmark}` : ""}</div></dd>
             <dt>Client</dt>
-            <dd>{b.client_name}<div className="note mono">{prettyPhone(b.client_phone)}</div></dd>
+            <dd>
+              {b.client_name}
+              <div className="note mono">{prettyPhone(b.client_phone)}</div>
+              {b.client_whatsapp_username && <div className="note mono">{prettyWhatsAppUsername(b.client_whatsapp_username)}</div>}
+            </dd>
             <dt>Therapist</dt><dd>{b.therapist_names?.join(", ") ?? "Unassigned"}</dd>
             {staff && (
               <>
@@ -291,19 +296,28 @@ export default async function BookingDetail({
 
         {staff && (
           <Card title="WhatsApp">
-            <div className="row">
-              {(templates ?? []).map((t) => (
-                <a key={t.key} className="btn sm"
-                   href={waLink(b.client_whatsapp || b.client_phone, fillTemplate(t.body, vars))}
-                   target="_blank" rel="noopener noreferrer">
-                  {t.name} ↗
-                </a>
-              ))}
-            </div>
-            <p className="note" style={{ marginTop: 8 }}>
-              Opens WhatsApp with the message prefilled. Nothing is sent from here
-              until the Cloud API is wired up.
-            </p>
+            {whatsappNumber ? (
+              <>
+                <div className="row">
+                  {(templates ?? []).map((t) => (
+                    <a key={t.key} className="btn sm"
+                       href={waLink(whatsappNumber, fillTemplate(t.body, vars))}
+                       target="_blank" rel="noopener noreferrer">
+                      {t.name} ↗
+                    </a>
+                  ))}
+                </div>
+                <p className="note" style={{ marginTop: 8 }}>
+                  Opens WhatsApp with the message prefilled. Nothing is sent from here
+                  until the Cloud API is wired up.
+                </p>
+              </>
+            ) : (
+              <p className="note" style={{ margin: 0 }}>
+                This client is identified by WhatsApp username {prettyWhatsAppUsername(b.client_whatsapp_username)}.
+                Open WhatsApp and search that username; a phone-based prefilled link is not available for this contact.
+              </p>
+            )}
           </Card>
         )}
 
