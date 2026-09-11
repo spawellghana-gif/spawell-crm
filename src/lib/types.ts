@@ -80,6 +80,7 @@ export type BookingView = {
   source: string; campaign: string; cancel_reason: string | null;
   created_at: string; updated_at: string; archived_at: string | null;
   client_name: string; client_phone: string; client_whatsapp: string;
+  client_whatsapp_username: string;
   service_name: string; partner_name: string | null;
   paid_pesewas: number; balance_pesewas: number;
   therapist_names: string[] | null; therapist_ids: string[] | null;
@@ -87,7 +88,7 @@ export type BookingView = {
 
 export type EnquiryView = {
   id: string; ref: string; client_id: string | null; partner_id: string | null;
-  full_name: string; phone_e164: string; whatsapp_e164: string;
+  full_name: string; phone_e164: string; whatsapp_e164: string; whatsapp_username: string;
   channel: string; source: string; campaign: string; ad_group: string; keyword: string;
   service_id: string | null; duration_min: number | null; preferred_at: string | null;
   location_type: LocationType; area: string; address: string; landmark: string;
