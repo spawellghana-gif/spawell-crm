@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import { requireRole } from "@/lib/auth";
 import { supabaseServer } from "@/lib/supabase/server";
 import {
-  fmtDate, fmtDateTime, prettyPhone, ghs, waLink, fillTemplate, titleise,
+  fmtDate, fmtDateTime, prettyPhone, prettyWhatsAppUsername, ghs, waLink, fillTemplate, titleise,
 } from "@/lib/format";
 import { Card, Field, PageHead, EnquiryChip, Empty, ErrorNote, Chip } from "@/components/ui";
 import { ENQUIRY_LABEL, type EnquiryView, type EnquiryStatus } from "@/lib/types";
@@ -23,15 +23,30 @@ export default async function EnquiryDetail({
   if (!enquiry) notFound();
   const e = enquiry as EnquiryView;
 
-  const [{ data: events }, { data: dupes }, { data: lostReasons }, { data: template }, { data: zones }, { data: services }] =
+  const [phoneDupes, usernameDupes, eventsResult, lostReasonsResult, templateResult, zonesResult, servicesResult] =
     await Promise.all([
+      e.phone_e164
+        ? supabase.from("enquiry").select("id, ref, status").eq("phone_e164", e.phone_e164).neq("id", e.id)
+        : Promise.resolve({ data: [] }),
+      e.whatsapp_username
+        ? supabase.from("enquiry").select("id, ref, status").eq("whatsapp_username", e.whatsapp_username).neq("id", e.id)
+        : Promise.resolve({ data: [] }),
       supabase.from("enquiry_event").select("*").eq("enquiry_id", e.id).order("created_at", { ascending: false }),
-      supabase.from("enquiry").select("id, ref, status").eq("phone_e164", e.phone_e164).neq("id", e.id),
       supabase.from("lookup_value").select("value, label").eq("kind", "lost_reason").order("sort_order"),
       supabase.from("message_template").select("body").eq("key", "quote").maybeSingle(),
       supabase.from("zone").select("name").order("name"),
       supabase.from("service").select("id, name").eq("active", true).order("sort_order"),
     ]);
+
+  const dupes = [...new Map(
+    [...(phoneDupes.data ?? []), ...(usernameDupes.data ?? [])].map((d) => [d.id, d]),
+  ).values()];
+  const events = eventsResult.data;
+  const lostReasons = lostReasonsResult.data;
+  const template = templateResult.data;
+  const zones = zonesResult.data;
+  const services = servicesResult.data;
+  const whatsappNumber = e.whatsapp_e164 || e.phone_e164;
 
   const quoteMessage = fillTemplate(template?.body ?? "Hello {name}, ", {
     name: e.full_name.split(" ")[0],
@@ -50,8 +65,10 @@ export default async function EnquiryDetail({
         blurb={`${e.ref} · received ${fmtDateTime(e.created_at)}`}
         actions={
           <>
-            <a className="btn pri" href={waLink(e.whatsapp_e164 || e.phone_e164, quoteMessage)}
-               target="_blank" rel="noopener noreferrer">Open in WhatsApp ↗</a>
+            {whatsappNumber && (
+              <a className="btn pri" href={waLink(whatsappNumber, quoteMessage)}
+                 target="_blank" rel="noopener noreferrer">Open in WhatsApp ↗</a>
+            )}
             <Link className="btn" href="/enquiries">Back</Link>
           </>
         }
@@ -66,7 +83,7 @@ export default async function EnquiryDetail({
         {e.partner_name && <Chip tone="teal">via {e.partner_name}</Chip>}
       </div>
 
-      {!!dupes?.length && (
+      {!!dupes.length && (
         <div className="alert warn" style={{ marginBottom: 12 }}>
           <span aria-hidden="true">⚠</span>
           <span>
@@ -76,7 +93,7 @@ export default async function EnquiryDetail({
             ))}
             {e.client_id
               ? <>This enquiry is already linked to the same client profile. <Link href={`/clients/${e.client_id}`}>View client history</Link>.</>
-              : "When converted, the CRM will match the phone number and use the existing client profile."}
+              : "When converted, the CRM will match the phone number or WhatsApp username and use the existing client profile."}
           </span>
         </div>
       )}
@@ -85,6 +102,7 @@ export default async function EnquiryDetail({
         <Card title="Details">
           <dl className="meta">
             <dt>Phone</dt><dd className="mono">{prettyPhone(e.phone_e164)}</dd>
+            <dt>WhatsApp username</dt><dd className="mono">{prettyWhatsAppUsername(e.whatsapp_username)}</dd>
             <dt>Channel · source</dt><dd>{titleise(e.channel)} · {titleise(e.source)}</dd>
             <dt>Campaign</dt><dd>{e.campaign || "—"}</dd>
             <dt>Service</dt>
