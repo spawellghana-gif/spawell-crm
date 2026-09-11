@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { requireRole } from "@/lib/auth";
 import { supabaseServer } from "@/lib/supabase/server";
-import { fmtDate, fmtTime, prettyPhone, ghsShort, titleise } from "@/lib/format";
+import { fmtDate, fmtTime, prettyPhone, prettyWhatsAppUsername, ghsShort, titleise } from "@/lib/format";
 import { Card, Empty, PageHead, EnquiryChip } from "@/components/ui";
 import { ENQUIRY_LABEL, type EnquiryView, type EnquiryStatus } from "@/lib/types";
 
@@ -16,8 +16,8 @@ export default async function EnquiriesPage({
   let query = supabase.from("enquiry_view").select("*").is("archived_at", null);
   if (searchParams.status) query = query.eq("status", searchParams.status);
   if (searchParams.q) {
-    const q = searchParams.q.trim();
-    query = query.or(`full_name.ilike.%${q}%,ref.ilike.%${q}%,phone_e164.ilike.%${q}%`);
+    const q = searchParams.q.trim().replace(/^@/, "");
+    query = query.or(`full_name.ilike.%${q}%,ref.ilike.%${q}%,phone_e164.ilike.%${q}%,whatsapp_username.ilike.%${q}%`);
   }
   const { data, error } = await query.order("created_at", { ascending: false }).limit(200);
   const rows = (data ?? []) as EnquiryView[];
@@ -27,13 +27,13 @@ export default async function EnquiriesPage({
     <>
       <PageHead
         title="Enquiries"
-        blurb="WhatsApp-first capture. An enquiry converts straight into a booking — there is no separate deal stage."
+        blurb="WhatsApp-first capture. Clients can be identified by phone number, WhatsApp username, or both."
         actions={<Link className="btn pri" href="/enquiries/new">+ New enquiry</Link>}
       />
 
       <form className="row" style={{ marginBottom: 12 }}>
         <input className="inp" name="q" defaultValue={searchParams.q ?? ""}
-          placeholder="Name, phone or enquiry ref" style={{ maxWidth: 280 }} />
+          placeholder="Name, phone, username or enquiry ref" style={{ maxWidth: 320 }} />
         <select className="inp" name="status" defaultValue={searchParams.status ?? ""} style={{ maxWidth: 180 }}>
           <option value="">All statuses</option>
           {(Object.keys(ENQUIRY_LABEL) as EnquiryStatus[]).map((k) => (
@@ -51,7 +51,7 @@ export default async function EnquiriesPage({
           <table>
             <thead>
               <tr>
-                <th>Ref</th><th>Received</th><th>Name</th><th>Phone</th>
+                <th>Ref</th><th>Received</th><th>Name</th><th>Contact</th>
                 <th>Channel / source</th><th>Service</th><th className="r">Quote</th>
                 <th>Status</th><th>Follow-up</th>
               </tr>
@@ -65,7 +65,10 @@ export default async function EnquiriesPage({
                     <td className="mono"><Link href={`/enquiries/${e.id}`}>{e.ref}</Link></td>
                     <td>{fmtDate(e.created_at)}<div className="note num">{fmtTime(e.created_at)}</div></td>
                     <td><Link href={`/enquiries/${e.id}`}><b>{e.full_name}</b></Link></td>
-                    <td className="mono">{prettyPhone(e.phone_e164)}</td>
+                    <td className="mono">
+                      {prettyPhone(e.phone_e164)}
+                      {e.whatsapp_username && <div className="note mono">{prettyWhatsAppUsername(e.whatsapp_username)}</div>}
+                    </td>
                     <td>{titleise(e.channel)}<div className="note">{titleise(e.source)}</div></td>
                     <td>{e.service_name ?? "—"}</td>
                     <td className="r num">{e.quote_pesewas ? ghsShort(e.quote_pesewas) : "—"}</td>
