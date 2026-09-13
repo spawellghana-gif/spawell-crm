@@ -11,7 +11,7 @@
  */
 
 import { NextResponse } from "next/server";
-import { serviceClient, processQueue } from "@/lib/conversions";
+import { serviceClient, processQueue, backfillMissingConversions, refreshConversionStatuses } from "@/lib/conversions";
 import { prepareGoogleAdsRuntime } from "@/lib/google-ads-runtime";
 
 export const dynamic = "force-dynamic";
@@ -27,6 +27,7 @@ function authorised(req: Request, key: "CONVERSION_SYNC_SECRET" | "CRON_SECRET")
 }
 
 async function run(req: Request) {
+  const startedAt = Date.now();
   const supabase = serviceClient();
   if (!supabase) {
     return NextResponse.json({ error: "Server credentials are not configured." }, { status: 503 });
@@ -38,14 +39,34 @@ async function run(req: Request) {
   }
 
   const url = new URL(req.url);
+  const validateOnly = url.searchParams.get("validateOnly") === "1";
+  try {
+  if (!validateOnly) await backfillMissingConversions(supabase);
   const result = await processQueue(supabase, {
     limit: Math.min(Math.max(Math.floor(Number(url.searchParams.get("limit"))) || 25, 1), 200),
     // ?validateOnly=1 asks Google to check the payload without recording it —
     // the way to prove the wiring before a real conversion is ever reported.
-    validateOnly: url.searchParams.get("validateOnly") === "1",
+    validateOnly,
+    deadline: startedAt + 30_000,
   });
-
-  return NextResponse.json(result);
+  const processing = !validateOnly && Date.now() < startedAt + 35_000
+    ? await refreshConversionStatuses(supabase, 20, startedAt + 40_000) : null;
+  if (!validateOnly) {
+    const { error } = await supabase.from("settings").update({
+      conversion_worker_last_run_at: new Date().toISOString(),
+      conversion_worker_last_result: { ...result, processing },
+    }).eq("id", true);
+    if (error) throw new Error("Worker completed but could not save its run history.");
+  }
+  return NextResponse.json({ ...result, processing });
+  } catch (e) {
+    const error = e instanceof Error ? e.message : "Conversion worker failed.";
+    if (!validateOnly) await supabase.from("settings").update({
+      conversion_worker_last_run_at: new Date().toISOString(),
+      conversion_worker_last_result: { error },
+    }).eq("id", true);
+    return NextResponse.json({ error }, { status: 500 });
+  }
 }
 
 /** External callers explicitly POST with the conversion worker secret. */

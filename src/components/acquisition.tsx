@@ -35,7 +35,7 @@ export function Acquisition({
   const isGoogleAds = status === "google_ads";
 
   const syncLabel: Record<string, { text: string; tone: string }> = {
-    synced:  { text: "Synced", tone: "ok" },
+    synced:  { text: "Uploaded", tone: "info" },
     pending: { text: "Pending", tone: "warn" },
     sending: { text: "Sending", tone: "info" },
     failed:  { text: "Failed", tone: "bad" },

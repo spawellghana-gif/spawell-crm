@@ -192,6 +192,46 @@ export async function sendConversion(payload: ConversionPayload, opts: { validat
 }
 
 export const MAX_ATTEMPTS = 6;
+
+export type ProcessingStatus = "unchecked" | "processing" | "success" | "failed" | "partial_success" | "unknown";
+export type ProcessingResult = { status: ProcessingStatus; response: unknown; error?: string };
+
+/** One event is sent to one destination. Refuse a missing or different
+ * destination instead of mistaking another account's result for success. */
+export function parseConversionStatus(response: any, destination: { customerId: string; conversionAction: string }): ProcessingResult {
+  const rows = response?.requestStatusPerDestination;
+  const row = Array.isArray(rows) ? rows.find(r =>
+    r?.destination?.operatingAccount?.accountId === destination.customerId &&
+    r?.destination?.productDestinationId === destination.conversionAction) : undefined;
+  if (!row) return { status: "unknown", response, error: "Google returned no processing result for the configured conversion destination." };
+  const statuses: Record<string, ProcessingStatus> = {
+    PROCESSING: "processing", SUCCESS: "success", FAILED: "failed", PARTIAL_SUCCESS: "partial_success",
+  };
+  const status = statuses[row.requestStatus] ?? "unknown";
+  const reasons = (row.errorInfo?.errorCounts ?? []).map((e: any) =>
+    `${String(e.reason ?? "Unknown processing error").replace("PROCESSING_ERROR_REASON_", "")}: ${e.recordCount ?? "?"}`);
+  return { status, response, ...(reasons.length ? { error: reasons.join("; ").slice(0, 1000) }
+    : status === "unknown" ? { error: "Google has not supplied a recognised processing status." } : {}) };
+}
+
+export async function retrieveConversionStatus(requestId: string): Promise<ProcessingResult> {
+  const c = googleAdsConfig();
+  try {
+    const token = await accessToken();
+    const url = new URL("https://datamanager.googleapis.com/v1/requestStatus:retrieve");
+    url.searchParams.set("requestId", requestId);
+    const res = await fetch(url, {
+      headers: { authorization: `Bearer ${token}`, "x-goog-user-project": c.quotaProjectId },
+      signal: AbortSignal.timeout(10_000),
+    });
+    const response = await res.json().catch(() => null);
+    if (!res.ok) return { status: "unknown", response: null, error: googleError(response, `Google status check returned HTTP ${res.status}`) };
+    return parseConversionStatus(response, c);
+  } catch (e) {
+    return { status: "unknown", response: null, error: e instanceof Error ? e.message : "Google processing check failed" };
+  }
+}
+
 export function nextAttemptAt(attempts: number, from = new Date()): Date | null {
   if (attempts >= MAX_ATTEMPTS) return null;
   const minutes = Math.pow(5, attempts) / 5;

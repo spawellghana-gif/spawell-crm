@@ -16,14 +16,22 @@ const event = (id: string) => ({
   value_pesewas: 45000, currency: "GHS", gclid: `click-${id}`,
 });
 
-function database(enabled = true) {
+function database(enabled = true, saveFails = false) {
   const tables: Record<string, Record<string, any>[]> = {
     settings: [{ id: true, google_ads_sync_enabled: enabled }],
     conversion_event: [event("first"), event("second")],
     conversion_attempt: [],
   };
   const writes: string[] = [];
-  const client = { from(table: string) {
+  const client = { async rpc(name: string, args: Record<string, any>) {
+    if (name !== "finish_conversion_attempt") throw new Error(`Unexpected RPC ${name}`);
+    if (saveFails) return { data: null, error: { message: "RLS denied attempt insert" } };
+    const row = tables.conversion_event.find(r => r.id === args.p_event_id);
+    tables.conversion_attempt.push({ conversion_id: row!.id, ok: args.p_ok });
+    Object.assign(row!, { status: args.p_ok ? "synced" : "pending", attempts: row!.attempts + 1,
+      google_response: args.p_response, next_attempt_at: args.p_ok ? null : "2099-01-01T00:00:00Z" });
+    return { data: true, error: null };
+  }, from(table: string) {
     let operation = "select", patch: Record<string, any> = {}, limit = Infinity;
     const conditions: ((row: Record<string, any>) => boolean)[] = [];
     const execute = () => {
@@ -101,5 +109,38 @@ describe("conversion queue controls", () => {
     expect(db.tables.conversion_event[1].status).toBe("synced");
     await processQueue(db.client, { conversionId: "second" });
     expect(mocks.send).toHaveBeenCalledTimes(1);
+  });
+});
+
+
+describe("durable upload results", () => {
+  it("does not claim a successful sync if saving its receipt and attempt fails", async () => {
+    const db = database(true, true);
+    const result = await processQueue(db.client, { limit: 1 });
+    expect(result).toMatchObject({ synced: 0, failed: 1 });
+    expect(result.note).toContain("could not be saved");
+    expect(db.tables.conversion_event[0].status).toBe("sending");
+  });
+  it("recovers an interrupted claim using its original transaction ID", async () => {
+    const db = database();
+    Object.assign(db.tables.conversion_event[0], { status: "sending", last_attempt_at: "2026-01-01T00:00:00Z" });
+    await processQueue(db.client, { conversionId: "first", limit: 1 });
+    expect(mocks.send).toHaveBeenCalledWith(expect.objectContaining({ transactionId: "SPAWELL-first" }), expect.anything());
+    expect(db.tables.conversion_event[0].status).toBe("synced");
+    expect(db.tables.conversion_attempt).toHaveLength(1);
+  });
+  it("does not steal a recent claim from another worker", async () => {
+    const db = database();
+    Object.assign(db.tables.conversion_event[0], { status: "sending", last_attempt_at: new Date().toISOString() });
+    const result = await processQueue(db.client, { conversionId: "first" });
+    expect(result.attempted).toBe(0);
+    expect(mocks.send).not.toHaveBeenCalled();
+  });
+  it("retains a failed delivery in the queue and records the failed attempt", async () => {
+    const db = database();
+    mocks.send.mockResolvedValue({ ok: false, httpStatus: 503, response: null, error: "Google unavailable" });
+    await processQueue(db.client, { limit: 1 });
+    expect(db.tables.conversion_event[0]).toMatchObject({ status: "pending", attempts: 1 });
+    expect(db.tables.conversion_attempt[0].ok).toBe(false);
   });
 });

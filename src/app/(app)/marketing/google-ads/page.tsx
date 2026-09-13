@@ -10,9 +10,11 @@ import {
   validateConversions,
   backfillConversions,
   toggleSync,
+  checkConversionProcessing,
 } from "./actions";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
 const RANGES: [string, string, number][] = [
   ["today", "Today", 0],
@@ -23,7 +25,12 @@ const RANGES: [string, string, number][] = [
 ];
 
 const STATUS_TONE: Record<string, string> = {
-  synced: "ok", pending: "warn", sending: "info", failed: "bad", skipped: "", void: "",
+  synced: "info", pending: "warn", sending: "info", failed: "bad", skipped: "", void: "",
+};
+const STATUS_LABEL: Record<string, string> = { synced: "Uploaded" };
+const PROCESSING_LABEL: Record<string, string> = {
+  unchecked: "Awaiting check", processing: "Google is processing", success: "Processing succeeded",
+  failed: "Processing failed", partial_success: "Partially processed", unknown: "Check unavailable",
 };
 
 export default async function GoogleAdsPage({
@@ -53,7 +60,7 @@ export default async function GoogleAdsPage({
       supabase.from("conversion_event")
         .select("*, booking:booking_id(ref, status)")
         .order("created_at", { ascending: false }).limit(100),
-      supabase.from("settings").select("google_ads_sync_enabled").eq("id", true).maybeSingle(),
+      supabase.from("settings").select("google_ads_sync_enabled, conversion_worker_last_run_at, conversion_worker_last_result").eq("id", true).maybeSingle(),
     ]);
 
   if (enquiriesError || bookingsError || conversionsError || settingsError) {
@@ -81,6 +88,7 @@ export default async function GoogleAdsPage({
   const cfg = googleAdsConfig();
   const authMode = isOwner ? googleAdsAuthMode() : "none";
   const syncOn = Boolean(settings?.google_ads_sync_enabled) && (isOwner ? cfg.syncEnabled : true);
+  const workerConfigured = Boolean(process.env.CRON_SECRET?.trim() && process.env.SUPABASE_SERVICE_ROLE_KEY?.trim());
 
   const filtered = searchParams.status ? conv.filter((c) => c.status === searchParams.status) : conv;
 
@@ -120,13 +128,13 @@ export default async function GoogleAdsPage({
 
       <div className="kpis" style={{ marginBottom: 14 }}>
         <Kpi label="Google Ads leads" value={googleEnq.length} detail={`of ${enq.length} enquiries`} />
-        <Kpi label="Confirmed bookings" value={confirmed.length} detail="attributed to Google Ads" />
+        <Kpi label="Confirmed bookings" value={confirmed.length} detail="Google Ads source in CRM" />
         <Kpi label="Completed services" value={completed.length} />
         <Kpi
           label="Lead → booking"
           value={googleEnq.length ? `${((confirmed.length / googleEnq.length) * 100).toFixed(0)}%` : "—"}
         />
-        <Kpi label="Attributed revenue" value={ghsShort(revenue)} />
+        <Kpi label="Booked value" value={ghsShort(revenue)} detail="Google Ads source in CRM" />
         <Kpi
           label="Average booking"
           value={confirmed.length ? ghs(Math.round(revenue / confirmed.length)) : "—"}
@@ -138,7 +146,7 @@ export default async function GoogleAdsPage({
           {authMode === "vercel_oidc" ? (
             <>
               <p className="note" style={{ marginTop: 0 }}>
-                <b>Keyless authentication is active.</b> Vercel issues a short-lived OIDC token for this production deployment; Google exchanges it through Workload Identity Federation and impersonates the dedicated service account. No Google private key is stored anywhere.
+                <b>Keyless authentication is configured.</b> Use Validate to test the live connection. Google processing is checked separately after an upload.
               </p>
               <div className="note" style={{ lineHeight: 1.6 }}>
                 Google Cloud project: <b>{GOOGLE_ADS_WIF.projectId}</b><br />
@@ -171,16 +179,17 @@ export default async function GoogleAdsPage({
                 <button className="btn" type="submit">{syncOn ? "Pause sync" : "Enable sync"}</button>
               </form>
               <form action={validateConversions}><button className="btn" type="submit">Validate</button></form>
+              <form action={checkConversionProcessing}><button className="btn" type="submit">Check Google processing</button></form>
               <form action={retryConversions}><button className="btn pri" type="submit">Sync now</button></form>
             </div>
           ) : undefined
         }
       >
         <div className="row" style={{ gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
-          {["synced", "pending", "failed", "skipped", "void"].map((s) => (
+          {["synced", "pending", "sending", "failed", "skipped", "void"].map((s) => (
             <Link key={s} className={`btn${searchParams.status === s ? " pri" : ""}`}
                   href={`/marketing/google-ads?range=${rangeKey}&status=${s}`}>
-              {s} · {byStatus(s)}
+              {STATUS_LABEL[s] ?? s} · {byStatus(s)}
             </Link>
           ))}
           {searchParams.status && (
@@ -188,12 +197,23 @@ export default async function GoogleAdsPage({
           )}
         </div>
         <p className="note" style={{ marginTop: 0 }}>
-          <b>Skipped</b> means the booking had no advertising evidence, so no
-          conversion was created for it. <b>Void</b> means it was cancelled in
+          <b>Uploaded</b> means Google returned a receipt. Processing success confirms ingestion;
+          attributed conversions must still be checked in Google Ads. <b>Skipped</b> means
+          the booking had insufficient matching information. <b>Void</b> means it was cancelled or archived in
           the CRM. Previously uploaded conversions remain in Google. Sync is currently{" "}
           <b>{syncOn ? "on" : "off"}</b>
           {!syncOn && " — sending is paused"}.
         </p>
+        <p className="note">
+          Upload schedule: daily at 01:00 Accra time. Last worker run:{" "}
+          <b>{settings?.conversion_worker_last_run_at ? fmtDateTime(settings.conversion_worker_last_run_at) : "not yet recorded"}</b>.
+          {settings?.conversion_worker_last_result?.error && <span style={{ color: "var(--bad)" }}> {settings.conversion_worker_last_result.error}</span>}
+          {" "}The queue below shows the latest 100 records across all dates.
+        </p>
+        {isOwner && !workerConfigured && <p className="note" style={{ color: "var(--bad)" }}>
+          Automatic uploads need server configuration: {!process.env.CRON_SECRET?.trim() ? "cron authentication " : ""}
+          {!process.env.SUPABASE_SERVICE_ROLE_KEY?.trim() ? "database worker credentials" : ""}.
+        </p>}
       </Card>
 
       <Card title="Conversions" pad={false}>
@@ -201,7 +221,7 @@ export default async function GoogleAdsPage({
           <table>
             <thead><tr>
               <th>Transaction ID</th><th>Booking</th><th>Confirmed</th>
-              <th className="r">Value</th><th>Match</th><th>Status</th>
+              <th className="r">Value</th><th>Match</th><th>Upload</th><th>Google processing</th>
               <th className="r">Tries</th>{isOwner && <th className="r"></th>}
             </tr></thead>
             <tbody>
@@ -218,10 +238,21 @@ export default async function GoogleAdsPage({
                       : c.phone_sha256 ? "Phone (hashed)" : "—"}
                   </td>
                   <td>
-                    <Chip tone={STATUS_TONE[c.status] ?? ""}>{c.status}</Chip>
+                    <Chip tone={STATUS_TONE[c.status] ?? ""}>{STATUS_LABEL[c.status] ?? c.status}</Chip>
                     {c.skip_reason && <div className="note">{c.skip_reason}</div>}
                     {c.error_detail && <div className="note" style={{ color: "var(--bad)" }}>{c.error_detail.slice(0, 90)}</div>}
-                    {c.revision > 1 && <div className="note">reconfirmed ×{c.revision} — reported once</div>}
+                    {c.revision > 1 && <div className="note">reconfirmed ×{c.revision} — original transaction ID</div>}
+                  </td>
+                  <td>
+                    {c.google_response?.requestId ? <>
+                      <Chip tone={c.google_processing_status === "success" ? "ok" : ["failed", "partial_success"].includes(c.google_processing_status) ? "bad" : "warn"}>
+                        {PROCESSING_LABEL[c.google_processing_status] ?? "Awaiting check"}
+                      </Chip>
+                      {c.google_processing_error && <div className="note" style={{ color: "var(--bad)" }}>{c.google_processing_error}</div>}
+                      {c.google_processing_response?.requestStatusPerDestination?.flatMap((d: any) => d.warningInfo?.warningCounts ?? []).map((w: any, i: number) =>
+                        <div className="note" key={i}>{String(w.reason ?? "Google warning").replace("PROCESSING_WARNING_REASON_", "")}: {w.recordCount ?? "?"}</div>)}
+                      {c.google_processing_checked_at && <div className="note">Checked {fmtDateTime(c.google_processing_checked_at)}</div>}
+                    </> : "—"}
                   </td>
                   <td className="r num">{c.attempts}</td>
                   {isOwner && (
@@ -240,7 +271,7 @@ export default async function GoogleAdsPage({
                 </tr>
               ))}
               {!filtered.length && (
-                <tr><td colSpan={isOwner ? 8 : 7}>
+                <tr><td colSpan={isOwner ? 9 : 8}>
                   <Empty title="No conversions yet">
                     A conversion is created the moment a booking is set to
                     Confirmed. If you have confirmed bookings from before this
@@ -257,7 +288,7 @@ export default async function GoogleAdsPage({
         <div style={{ marginTop: 14 }}>
           <Card title="Maintenance">
             <p className="note" style={{ marginTop: 0 }}>
-              Backfill checks up to 500 confirmed bookings with a recorded
+              Backfill recovers up to 100 missing records for confirmed bookings with a recorded
               confirmation time and creates missing conversion records.
               Existing records keep their original transaction ID.
             </p>

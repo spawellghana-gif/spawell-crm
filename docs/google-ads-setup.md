@@ -59,3 +59,36 @@ References: [Google Data Manager ingestion](https://developers.google.com/data-m
 [consent fields](https://developers.google.com/data-manager/api/reference/rest/v1/Consent),
 [Vercel cron authentication](https://vercel.com/docs/cron-jobs/manage-cron-jobs),
 [Vercel scheduling limits](https://vercel.com/docs/cron-jobs/usage-and-pricing).
+
+
+## Reliable queue and processing checks (September 2026)
+
+Apply `20260913221054_reliable_conversion_reporting.sql` before deploying the
+matching application changes. Confirmation creates its local conversion event
+inside the database transaction. This requires no server credential and makes no
+Google call. Owners can backfill missing records; the scheduled worker also checks
+for gaps. Cancelled or archived bookings are voided locally. Reconfirmation retains
+an existing receipt and transaction ID. Remote retractions are not implemented.
+
+The uploader claims each event, then saves its result and append-only attempt
+history atomically. A worker interrupted for ten minutes can be retried with the
+same transaction ID. Validation does not mutate the queue. Existing historical
+receipts are preserved; missing historical attempt logs are not fabricated.
+
+`Uploaded` means Data Manager returned a request ID. `Check Google processing`
+retrieves the per-destination request status and displays errors and warnings.
+Processing success is ingestion success, not evidence of an attributed conversion
+in Google Ads. Confirm the action in Ads reporting separately before changing
+campaign goals or bidding.
+
+The production Vercel project is `spawell-crm`, serving `crm.spawellghana.com`.
+Its existing cron runs `/api/conversions/sync` daily at 01:00 UTC/Accra. Production
+requires `CRON_SECRET` and server-only `SUPABASE_SERVICE_ROLE_KEY`; the optional
+external POST uses `CONVERSION_SYNC_SECRET`. Never publish these values or add
+an unauthenticated worker route. The CRM displays missing worker configuration
+and the last recorded run. The database switch remains the upload control.
+
+Verify with `npm test`, `npm run build`, and the rollback-only SQL script at
+`supabase/tests/reliable_conversion_reporting.sql`. Then validate a real queued
+booking using the owner controls, upload it once, and check processing. Verify a
+scheduled invocation through its saved run time and result.

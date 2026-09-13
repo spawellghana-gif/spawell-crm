@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { requireRole } from "@/lib/auth";
-import { processQueue, ensureConversionForBooking } from "@/lib/conversions";
+import { processQueue, backfillMissingConversions, refreshConversionStatuses } from "@/lib/conversions";
 import { supabaseServer } from "@/lib/supabase/server";
 import { googleAdsConfig, googleAdsMissing } from "@/lib/google-ads";
 import { prepareGoogleAdsRuntime } from "@/lib/google-ads-runtime";
@@ -31,7 +31,11 @@ export async function retryConversions(formData: FormData) {
     if (error) back(error.message);
   }
 
-  const result = await processQueue(supabase, { limit: id ? 1 : 50, conversionId: id || undefined });
+  let result;
+  try {
+    if (!id) await backfillMissingConversions(supabase);
+    result = await processQueue(supabase, { limit: id ? 1 : 50, conversionId: id || undefined });
+  } catch (e) { back(e instanceof Error ? e.message : "Conversion sync failed."); }
   revalidatePath("/marketing/google-ads");
   back(result.note, result.failed && !result.synced ? "error" : "ok");
 }
@@ -43,7 +47,9 @@ export async function validateConversions() {
   const prepared = await prepareGoogleAdsRuntime(supabase);
   if (!prepared.ok) back(prepared.reason);
 
-  const result = await processQueue(supabase, { limit: 5, validateOnly: true });
+  let result;
+  try { result = await processQueue(supabase, { limit: 5, validateOnly: true }); }
+  catch (e) { back(e instanceof Error ? e.message : "Conversion validation failed."); }
   revalidatePath("/marketing/google-ads");
   back(`Validation run: ${result.note}. Nothing was reported to Google.`, result.failed ? "error" : "ok");
 }
@@ -52,22 +58,23 @@ export async function backfillConversions() {
   await requireRole("owner");
   const supabase = supabaseServer();
 
-  const { data: confirmed, error } = await supabase
-    .from("booking")
-    .select("id")
-    .in("status", ["confirmed", "therapist_assigned", "en_route", "arrived", "in_service", "completed", "paid"])
-    .is("archived_at", null)
-    .limit(500);
-  if (error) back(error.message);
-
-  let created = 0;
-  for (const b of confirmed ?? []) {
-    const r = await ensureConversionForBooking(supabase, b.id);
-    if (r && (r.status === "pending" || r.status === "skipped")) created++;
-  }
-
+  let created;
+  try { created = await backfillMissingConversions(supabase); }
+  catch (e) { back(e instanceof Error ? e.message : "Backfill failed."); }
   revalidatePath("/marketing/google-ads");
-  back(`Checked ${confirmed?.length ?? 0} confirmed bookings; ${created} conversion records created or updated.`, "ok");
+  back(`${created} missing conversion records created. Existing receipts were retained.`, "ok");
+}
+
+export async function checkConversionProcessing() {
+  await requireRole("owner");
+  const supabase = supabaseServer();
+  const prepared = await prepareGoogleAdsRuntime(supabase);
+  if (!prepared.ok) back(prepared.reason);
+  let result;
+  try { result = await refreshConversionStatuses(supabase); }
+  catch (e) { back(e instanceof Error ? e.message : "Google processing check failed."); }
+  revalidatePath("/marketing/google-ads");
+  back(result.note, result.failed ? "error" : "ok");
 }
 
 export async function toggleSync(formData: FormData) {

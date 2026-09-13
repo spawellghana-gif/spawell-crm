@@ -4,7 +4,6 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { supabaseServer } from "@/lib/supabase/server";
 import { requireUser } from "@/lib/auth";
-import { serviceClient, ensureConversionForBooking, voidConversionForBooking } from "@/lib/conversions";
 import { toPesewas } from "@/lib/format";
 
 const s = (fd: FormData, k: string) => String(fd.get(k) ?? "").trim();
@@ -52,27 +51,7 @@ export async function setBookingStatus(formData: FormData) {
   if (!saved) redirect(`/bookings/${id}?error=${encodeURIComponent("Booking could not be updated.")}`);
   await note(id, `Status set to ${status.replace(/_/g, " ")}.`);
 
-  // --- advertising, strictly downstream of the booking -------------------
-  // The booking is already saved. Everything below is best-effort: a failure
-  // here must never surface as a failed confirmation, and must never leave the
-  // officer unsure whether the booking took. Hence the try/catch that swallows.
-  try {
-    const service = serviceClient();
-    if (service) {
-      if (status === "confirmed") {
-        await ensureConversionForBooking(service, id);
-      } else if (
-        before?.ref &&
-        (status === "cancelled_client" || status === "cancelled_business" || status === "no_show")
-      ) {
-        await voidConversionForBooking(service, before.ref);
-      }
-    }
-  } catch {
-    // Deliberately silent to the operator. The conversion row, or its absence,
-    // is visible on the Google Ads Attribution page, which is where a problem
-    // with advertising reporting belongs — not on top of a confirmed booking.
-  }
+  // The database queues the conversion locally; Google calls happen later.
 
   revalidatePath(`/bookings/${id}`);
   revalidatePath("/bookings");
