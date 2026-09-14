@@ -98,6 +98,23 @@ function googleError(body: any, fallback: string): string {
   return body?.error?.message ?? body?.error_description ?? body?.error ?? fallback;
 }
 
+/** Diagnostic metadata only, never a credential or an authorization decision.
+ * Do not return the encoded token, signature, or arbitrary claims. */
+export function vercelIdentitySummary(token: string): string {
+  try {
+    const claims = JSON.parse(Buffer.from(token.split(".")[1], "base64url").toString("utf8"));
+    const parts: string[] = [];
+    for (const key of ["owner_id", "project_id", "environment"] as const) {
+      const value = claims[key];
+      if (typeof value === "string" && /^[a-zA-Z0-9_-]{1,80}$/.test(value)) parts.push(`${key}=${value}`);
+    }
+    if (typeof claims.sub === "string" && /^owner:[a-zA-Z0-9_-]{1,80}:project:[a-zA-Z0-9_-]{1,80}:environment:(production|preview|development)$/.test(claims.sub)) {
+      parts.push(`subject=${claims.sub}`);
+    }
+    return parts.length ? parts.join("; ") : "identity metadata unavailable";
+  } catch { return "identity metadata unavailable"; }
+}
+
 async function oidcAccessToken(subjectToken: string): Promise<{ value: string; expiresAt: number }> {
   const audience = `//iam.googleapis.com/projects/${GOOGLE_ADS_WIF.projectNumber}/locations/global/workloadIdentityPools/${GOOGLE_ADS_WIF.poolId}/providers/${GOOGLE_ADS_WIF.providerId}`;
   const stsRes = await fetch("https://sts.googleapis.com/v1/token", {
@@ -114,7 +131,7 @@ async function oidcAccessToken(subjectToken: string): Promise<{ value: string; e
     signal: AbortSignal.timeout(15_000),
   });
   const stsBody = await stsRes.json().catch(() => ({} as any));
-  if (!stsRes.ok || !stsBody.access_token) throw new Error(`Google STS rejected Vercel OIDC: ${googleError(stsBody, String(stsRes.status))}`);
+  if (!stsRes.ok || !stsBody.access_token) throw new Error(`Google STS rejected Vercel OIDC: ${googleError(stsBody, String(stsRes.status))}. Identity: ${vercelIdentitySummary(subjectToken)}`);
 
   const serviceAccount = encodeURIComponent(GOOGLE_ADS_WIF.serviceAccountEmail);
   const impersonateRes = await fetch(`https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/${serviceAccount}:generateAccessToken`, {
@@ -143,16 +160,20 @@ async function keyAccessToken(c: GoogleAdsConfig): Promise<{ value: string; expi
 
 async function accessToken(): Promise<string> {
   if (cachedToken && cachedToken.expiresAt > Date.now() + 60_000) return cachedToken.value;
-  let oidc = env("VERCEL_OIDC_TOKEN");
-  if (!oidc && (env("VERCEL") === "1" || env("VERCEL_ENV"))) {
+  if (googleAdsAuthMode() === "vercel_oidc") {
+    let oidc: string;
     try {
+      // The SDK prioritizes the function's trusted request context, then uses
+      // the environment only as a fallback and refreshes expired tokens.
+      // Reading process.env first can select a different build/dev identity.
       oidc = (await getVercelOidcToken())?.trim() ?? "";
-    } catch (e) {
-      const detail = e instanceof Error ? e.message : "unknown error";
-      throw new Error(`Vercel OIDC token unavailable: ${detail}`);
+    } catch {
+      throw new Error("Vercel OIDC token unavailable. Check the deployment's OIDC configuration.");
     }
+    if (!oidc) throw new Error("Vercel supplied no OIDC token for this request.");
+    cachedToken = await oidcAccessToken(oidc);
+    return cachedToken.value;
   }
-  if (oidc) { cachedToken = await oidcAccessToken(oidc); return cachedToken.value; }
   const c = googleAdsConfig();
   if (!c.clientEmail || !c.privateKey) throw new Error("No Google authentication is available: Vercel OIDC token and service-account key are both absent.");
   cachedToken = await keyAccessToken(c); return cachedToken.value;
