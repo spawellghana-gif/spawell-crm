@@ -42,7 +42,10 @@ const MOBILE: [string, string][] = [
 ];
 
 function isActive(pathname: string, href: string) {
-  return href === "/" ? pathname === "/" : pathname.startsWith(href);
+  const candidates = NAV.flatMap(section => section.items.map(([url]) => url));
+  const match = candidates.filter(url => url === "/" ? pathname === "/" : pathname === url || pathname.startsWith(`${url}/`))
+    .sort((a, b) => b.length - a.length)[0];
+  return match === href;
 }
 
 export function Rail({ role, name }: { role: AppRole; name: string }) {
@@ -69,7 +72,7 @@ export function Rail({ role, name }: { role: AppRole; name: string }) {
                 className={`navlink ${isActive(pathname, href) ? "on" : ""}`}
                 aria-current={isActive(pathname, href) ? "page" : undefined}
               >
-                {label}
+                <span className="nav-indicator" aria-hidden="true" />{label}
               </Link>
             ))}
           </div>
@@ -95,10 +98,20 @@ export function MobileNav({ role }: { role: AppRole }) {
   return (
     <nav className="mobnav" aria-label="Sections">
       {items.map(([href, label]) => (
-        <Link key={href} href={href} className={isActive(pathname, href) ? "on" : ""}>
+        <Link key={href} href={href} className={isActive(pathname, href) ? "on" : ""} aria-current={isActive(pathname, href) ? "page" : undefined}>
           {label}
         </Link>
       ))}
+      <details className="mobile-more" key={pathname}>
+        <summary>More</summary>
+        <div className="mobile-menu">
+          <strong>Workspace</strong>
+          {NAV.flatMap(section => section.items).filter(([href, , roles]) => roles.includes(role) && !items.some(([url]) => url === href)).map(([href, label]) => (
+            <Link key={href} href={href} aria-current={isActive(pathname, href) ? "page" : undefined}>{label}</Link>
+          ))}
+          <form action="/auth/signout" method="post"><button className="btn" type="submit">Sign out</button></form>
+        </div>
+      </details>
     </nav>
   );
 }

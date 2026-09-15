@@ -88,6 +88,10 @@ export default async function Dashboard({
         }
       />
 
+      <section className="welcome-panel" aria-label="Quick actions">
+        <div><span className="eyebrow">SpaWellGhana · Operations</span><h3>Your day.<br /><span>In focus.</span></h3><p>Appointments, clients, and the details that matter. All in one calm workspace.</p></div>
+        <div className="row"><Link className="btn pri" href="/enquiries/new">+ New enquiry</Link><Link className="btn" href="/bookings?when=upcoming">Upcoming bookings →</Link></div>
+      </section>
       <div className="stack" style={{ gap: 8, marginBottom: 14 }}>
         {unassigned.length > 0 && (
           <div className="alert info">
@@ -109,19 +113,24 @@ export default async function Dashboard({
         )}
       </div>
 
-      <div className="kpis" style={{ marginBottom: 14 }}>
+      <div className="kpis primary-kpis" style={{ marginBottom: 14 }}>
         <Kpi label="New enquiries" value={m.enquiries ?? 0} detail={`${m.enquiries_valid ?? 0} excluding spam`} />
-        <Kpi label="Bookings created" value={m.bookings_created ?? 0} />
-        <Kpi label="Confirmed" value={m.confirmed ?? 0} />
-        <Kpi label="Completed" value={m.completed ?? 0} />
-        <Kpi label="Cancelled" value={m.cancelled ?? 0} />
-        <Kpi label="No-shows" value={m.no_shows ?? 0} />
-        <Kpi label="Conversion" value={conv === null ? "—" : `${conv.toFixed(1)}%`} detail="booked ÷ non-spam enquiries" />
-        <Kpi label="Collected" value={ghsShort(m.collected_pesewas)} detail="payments net of refunds" />
-        <Kpi label="Booked value" value={ghsShort(m.booked_value_pesewas)} />
-        <Kpi label="Outstanding" value={ghsShort(m.outstanding_pesewas)} detail="live figure, all time" />
-        <Kpi label="Marketing spend" value={ghsShort(m.spend_pesewas)} />
+        <Kpi label="Confirmed bookings" value={m.confirmed ?? 0} detail="Selected date range" />
+        <Kpi label="Collected" value={ghsShort(m.collected_pesewas)} detail="Payments net of refunds" />
+        <Kpi label="Outstanding" value={ghsShort(m.outstanding_pesewas)} detail="Live figure · all time" />
       </div>
+      <details className="more-metrics">
+        <summary>More performance details <span aria-hidden="true">+</span></summary>
+        <div className="kpis">
+          <Kpi label="Bookings created" value={m.bookings_created ?? 0} />
+          <Kpi label="Completed" value={m.completed ?? 0} />
+          <Kpi label="Cancelled" value={m.cancelled ?? 0} />
+          <Kpi label="No-shows" value={m.no_shows ?? 0} />
+          <Kpi label="Conversion" value={conv === null ? "—" : `${conv.toFixed(1)}%`} detail="booked ÷ non-spam enquiries" />
+          <Kpi label="Booked value" value={ghsShort(m.booked_value_pesewas)} />
+          <Kpi label="Marketing spend" value={ghsShort(m.spend_pesewas)} />
+        </div>
+      </details>
 
       <div className="cols">
         <Card title={`Today · ${fmtDate(today)}`} pad={false}>
