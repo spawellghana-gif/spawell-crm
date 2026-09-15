@@ -138,3 +138,62 @@ textarea.inp{min-height:70px;resize:vertical;font-family:inherit}
   .mobnav a.on{color:var(--teal);font-weight:700}
 }
 @media (min-width:901px){ .mobnav{display:none} }
+
+/* Short, one-time entrances and responsive controls. Motion is opt-in through
+   the device preference; content remains visible without animation support. */
+@media (prefers-reduced-motion:no-preference){
+  @keyframes sw-reveal{
+    from{opacity:0;transform:translateY(6px)}
+    to{opacity:1;transform:translateY(0)}
+  }
+  @keyframes sw-fade{
+    from{opacity:0}
+    to{opacity:1}
+  }
+  .pagehead,.login .card{
+    animation:sw-reveal 240ms ease-out backwards;
+  }
+  .content .card,.content .alert{
+    animation:sw-fade 220ms ease-out backwards;
+  }
+  .kpis>.kpi{
+    animation:sw-reveal 260ms ease-out backwards;
+  }
+  .kpis>.kpi:nth-child(2){animation-delay:30ms}
+  .kpis>.kpi:nth-child(3){animation-delay:60ms}
+  .kpis>.kpi:nth-child(4){animation-delay:90ms}
+  .kpis>.kpi:nth-child(n+5){animation-delay:120ms}
+
+  .btn,.navlink,.mobnav a{
+    transition:transform 140ms ease-out,background-color 160ms ease-out,
+      border-color 160ms ease-out,color 160ms ease-out,box-shadow 160ms ease-out;
+  }
+  .inp{
+    transition:border-color 160ms ease-out,box-shadow 160ms ease-out;
+  }
+  .inp:focus-visible{
+    border-color:var(--teal);
+    box-shadow:0 0 0 3px var(--teal-soft);
+  }
+  tbody tr{transition:background-color 140ms ease-out}
+
+  /* Hover movement is limited to devices with a mouse-like pointer. */
+  @media (hover:hover) and (pointer:fine){
+    .btn:not(:disabled):not([aria-disabled="true"]):hover{
+      transform:translateY(-1px);
+      box-shadow:0 2px 5px rgb(0 0 0 / .08);
+    }
+    .navlink:hover{transform:translateX(2px)}
+  }
+  .btn:not(:disabled):not([aria-disabled="true"]):active,
+  .mobnav a:active{
+    transform:scale(.98);
+    box-shadow:none;
+  }
+}
+
+@media print{
+  .pagehead,.login .card,.content .card,.content .alert,.kpis>.kpi{
+    animation:none;
+  }
+}
