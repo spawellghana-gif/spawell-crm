@@ -88,6 +88,10 @@ export default async function Dashboard({
         }
       />
 
+      <section className="welcome-panel" aria-label="Quick actions">
+        <div><span className="eyebrow">SpaWellGhana · Operations</span><h3>Keep every booking moving.</h3><p>Manage today’s appointments and your next client enquiry.</p></div>
+        <div className="row"><Link className="btn pri" href="/enquiries/new">+ New enquiry</Link><Link className="btn" href="/bookings?when=upcoming">Upcoming bookings →</Link></div>
+      </section>
       <div className="stack" style={{ gap: 8, marginBottom: 14 }}>
         {unassigned.length > 0 && (
           <div className="alert info">

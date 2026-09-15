@@ -29,21 +29,22 @@ export default async function BookingsPage({
         title="Bookings"
         blurb={
           user.role === "therapist"
-            ? "Only the appointments assigned to you are listed — that is enforced by the database, not the screen."
+            ? "Your assigned appointments, times, and client details."
             : "Every appointment from draft through to payment."
         }
+        actions={user.role !== "therapist" ? <Link className="btn pri" href="/enquiries/new">+ New enquiry</Link> : undefined}
       />
 
-      <form className="row" style={{ marginBottom: 12 }}>
-        <input className="inp" name="q" defaultValue={searchParams.q ?? ""}
+      <form className="row filterbar" style={{ marginBottom: 12 }}>
+        <input className="inp" aria-label="Search bookings" name="q" defaultValue={searchParams.q ?? ""}
           placeholder="Ref, client or area" style={{ maxWidth: 240 }} />
-        <select className="inp" name="status" defaultValue={searchParams.status ?? ""} style={{ maxWidth: 200 }}>
+        <select className="inp" aria-label="Booking status" name="status" defaultValue={searchParams.status ?? ""} style={{ maxWidth: 200 }}>
           <option value="">All statuses</option>
           {(Object.keys(STATUS_LABEL) as BookingStatus[]).map((k) => (
             <option key={k} value={k}>{STATUS_LABEL[k]}</option>
           ))}
         </select>
-        <select className="inp" name="when" defaultValue={searchParams.when ?? ""} style={{ maxWidth: 150 }}>
+        <select className="inp" aria-label="Appointment date" name="when" defaultValue={searchParams.when ?? ""} style={{ maxWidth: 150 }}>
           <option value="">Any date</option>
           <option value="upcoming">Upcoming</option>
           <option value="past">Past</option>
@@ -52,6 +53,25 @@ export default async function BookingsPage({
         <Link className="btn" href="/bookings">Clear</Link>
       </form>
 
+      <div className="booking-mobile">
+        {rows.map(b => (
+          <article className="booking-preview" key={b.id}>
+            <div className="row"><span className="mono">{b.ref}</span><BookingChip status={b.status} /></div>
+            <h3><Link href={`/bookings/${b.id}`}>{b.client_name}</Link></h3>
+            <p>{b.service_name} · {b.duration_min} min · {b.guests} guest{b.guests > 1 ? "s" : ""}</p>
+            <div className="booking-slot">{fmtDate(b.starts_at)} · {fmtTime(b.starts_at)}–{fmtTime(b.ends_at)}</div>
+            <dl>
+              <dt>Location</dt><dd>{b.location_type === "hotel" ? "Hotel" : "Home"} · {b.area}</dd>
+              <dt>Therapist</dt><dd>{b.therapist_names?.join(", ") || "Unassigned"}</dd>
+              <dt>Total</dt><dd>{ghsShort(b.total_pesewas)}</dd>
+              <dt>Balance</dt><dd>{b.balance_pesewas > 0 ? ghsShort(b.balance_pesewas) : "Settled"}</dd>
+            </dl>
+            <Link className="btn" href={`/bookings/${b.id}`}>View booking →</Link>
+          </article>
+        ))}
+        {!rows.length && <Empty title="No bookings match">Try clearing the filters.</Empty>}
+      </div>
+      <div className="booking-desktop">
       <Card pad={false}>
         <div className="tablewrap">
           <table>
@@ -87,6 +107,7 @@ export default async function BookingsPage({
           </table>
         </div>
       </Card>
+      </div>
       <p className="note" style={{ marginTop: 8 }}>{rows.length} shown.</p>
     </>
   );
