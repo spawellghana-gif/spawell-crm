@@ -35,7 +35,14 @@ button,input,select,textarea{font:inherit;color:inherit}
 .app{display:flex;min-height:100vh}
 .rail{width:214px;flex:0 0 214px;background:var(--panel);border-right:1px solid var(--line);
   position:sticky;top:0;height:100vh;overflow:auto;display:flex;flex-direction:column}
-.brand{padding:15px 15px 12px;border-bottom:1px solid var(--line);display:flex;gap:10px;align-items:center}
+.brand{padding:15px 15px 12px;border-bottom:1px solid var(--line);display:flex;flex-direction:column;gap:10px;align-items:center;text-align:center}
+.brand>a{display:block;width:100%}
+/* Frame the supplied square artwork without changing its original file. */
+.brand-logo{display:block;position:relative;width:100%;aspect-ratio:1.55;overflow:hidden;border-radius:8px;background:#fafafa}
+.brand-logo img{display:block;width:100%;height:auto;position:absolute;left:0;top:-16%}
+.login-brand{display:flex;flex-direction:column;align-items:center;gap:14px;text-align:center}
+.login-brand .brand-logo{max-width:260px}
+.mobile-brand{display:none}
 .mark{width:30px;height:30px;border-radius:8px;background:var(--teal);color:var(--bg);
   display:grid;place-items:center;font-weight:700;font-size:13px}
 .brand h1{font-size:15px}
@@ -128,6 +135,8 @@ textarea.inp{min-height:70px;resize:vertical;font-family:inherit}
 .login .card{width:100%;max-width:390px}
 
 @media (max-width:900px){
+  .mobile-brand{display:flex;align-items:center;gap:14px;padding:10px 12px;border-bottom:1px solid var(--line);background:var(--panel);font-weight:600}
+  .mobile-brand>a{display:block;width:110px;flex-shrink:0}
   .rail{display:none}
   .content{padding:12px 12px 76px}
   .meta{grid-template-columns:1fr}
