@@ -39,7 +39,15 @@ the existing direct GA4 import and owner-only test-payment deletion.
   scheduling limits. Set a strong `CRON_SECRET` in Vercel; its scheduled request
   supplies the bearer header automatically. Exact timing depends on the plan.
 - External POST callers use a separate `CONVERSION_SYNC_SECRET`. The owner's
-  **Sync now** and **Retry** actions use their authenticated CRM session.
+  **Sync now** action invokes the protected GET worker when both worker secrets
+  are configured in Vercel Production. This verifies the same cron credentials,
+  database identity, and receipt processing immediately, and records the worker
+  result. The secret stays server-side and is sent only to the fixed CRM origin;
+  redirects are refused. Individual **Retry** actions, and environments without
+  the worker configuration, retain the authenticated CRM-session path.
+- On the current Hobby plan, the daily job can run anytime from 01:00 to 02:00
+  Accra time. A manual worker run verifies the endpoint but does not prove that
+  Vercel has delivered the next scheduled invocation.
 - A successful upload stores Google's `requestId`. This confirms receipt of the
   upload, not that Google Ads has matched or attributed the conversion. Verify
   processing and reporting in Google Ads before relying on the figures.

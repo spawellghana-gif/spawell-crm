@@ -14,14 +14,51 @@ function back(message: string, kind: "error" | "ok" = "error"): never {
   redirect(`/marketing/google-ads?${kind}=${encodeURIComponent(message)}`);
 }
 
+/** Called only after the owner check. Keep the secret on the server, pin the
+ * destination to this CRM, and never forward it through a redirect. This runs
+ * the same authenticated endpoint and database identity as Vercel Cron. */
+async function runScheduledConversionWorker(): Promise<Awaited<ReturnType<typeof processQueue>>> {
+  let response: Response;
+  try {
+    response = await fetch("https://crm.spawellghana.com/api/conversions/sync", {
+      method: "GET",
+      headers: { authorization: `Bearer ${process.env.CRON_SECRET!.trim()}` },
+      cache: "no-store",
+      redirect: "error",
+      signal: AbortSignal.timeout(45_000),
+    });
+  } catch {
+    throw new Error("The automatic worker could not be reached. Check the last worker run before retrying.");
+  }
+  const result = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new Error(typeof result?.error === "string"
+      ? `Automatic sync: ${result.error}`
+      : `The automatic worker returned HTTP ${response.status}.`);
+  }
+  if (typeof result?.note !== "string" || ![result.attempted, result.synced, result.failed].every(Number.isFinite)) {
+    throw new Error("The automatic worker returned an unexpected response. Check the last worker run before retrying.");
+  }
+  return { attempted: result.attempted, synced: result.synced, failed: result.failed,
+    note: `Automatic worker: ${result.note}` };
+}
+
 export async function retryConversions(formData: FormData) {
   await requireRole("owner");
+  const id = s(formData, "conversion_id");
+  if (!id && process.env.VERCEL_ENV === "production" && process.env.CRON_SECRET?.trim()
+    && process.env.SUPABASE_SERVICE_ROLE_KEY?.trim()) {
+    let result;
+    try { result = await runScheduledConversionWorker(); }
+    catch (e) { back(e instanceof Error ? e.message : "Automatic sync failed."); }
+    revalidatePath("/marketing/google-ads");
+    back(result.note, result.failed && !result.synced ? "error" : "ok");
+  }
   const supabase = supabaseServer();
 
   const prepared = await prepareGoogleAdsRuntime(supabase);
   if (!prepared.ok) back(prepared.reason);
 
-  const id = s(formData, "conversion_id");
   if (id) {
     const { error } = await supabase
       .from("conversion_event")

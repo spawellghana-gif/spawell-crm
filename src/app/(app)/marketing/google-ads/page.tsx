@@ -205,7 +205,7 @@ export default async function GoogleAdsPage({
           {!syncOn && " — sending is paused"}.
         </p>
         <p className="note">
-          Upload schedule: daily at 01:00 Accra time. Last worker run:{" "}
+          Upload schedule: daily during 01:00–02:00 Accra time. Last worker run:{" "}
           <b>{settings?.conversion_worker_last_run_at ? fmtDateTime(settings.conversion_worker_last_run_at) : "not yet recorded"}</b>.
           {settings?.conversion_worker_last_result?.error && <span style={{ color: "var(--bad)" }}> {settings.conversion_worker_last_result.error}</span>}
           {" "}The queue below shows the latest 100 records across all dates.
