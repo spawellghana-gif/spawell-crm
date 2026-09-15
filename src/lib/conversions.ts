@@ -19,6 +19,22 @@ import {
  *  change it, which is exactly what a deduplication key must guarantee. */
 export const dedupKey = (bookingRef: string) => `SPAWELL-${bookingRef}`;
 
+/** Identify an accidentally copied public key without displaying any key
+ * material. JWT claims are only a diagnostic here; Supabase verifies access. */
+export function workerDatabaseConfigurationError(): string | null {
+  const key = (process.env.SUPABASE_SERVICE_ROLE_KEY ?? "").trim();
+  if (!key) return "Set SUPABASE_SERVICE_ROLE_KEY to the CRM project's Supabase Secret key.";
+  let publicKey = key.startsWith("sb_publishable_");
+  if (!publicKey && key.split(".").length === 3) {
+    try {
+      publicKey = JSON.parse(Buffer.from(key.split(".")[1], "base64url").toString("utf8")).role === "anon";
+    } catch { /* The live Supabase request validates other credential formats. */ }
+  }
+  return publicKey
+    ? "SUPABASE_SERVICE_ROLE_KEY contains a public key. Replace its value with the CRM project's Supabase Secret key and redeploy."
+    : null;
+}
+
 /** Server-side client for the authenticated scheduled worker. */
 export function serviceClient(): SupabaseClient | null {
   const key = (process.env.SUPABASE_SERVICE_ROLE_KEY ?? "").trim();

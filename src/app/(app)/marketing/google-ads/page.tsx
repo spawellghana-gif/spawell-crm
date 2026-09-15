@@ -5,6 +5,7 @@ import { ghs, ghsShort, fmtDate, fmtDateTime, todayAccra, addDays } from "@/lib/
 import { Card, Empty, PageHead, Kpi, Chip, ErrorNote } from "@/components/ui";
 import { googleAdsMissing, googleAdsConfig, googleAdsAuthMode, GOOGLE_ADS_WIF } from "@/lib/google-ads";
 import { prepareGoogleAdsRuntime } from "@/lib/google-ads-runtime";
+import { workerDatabaseConfigurationError } from "@/lib/conversions";
 import {
   retryConversions,
   validateConversions,
@@ -88,7 +89,8 @@ export default async function GoogleAdsPage({
   const cfg = googleAdsConfig();
   const authMode = isOwner ? googleAdsAuthMode() : "none";
   const syncOn = Boolean(settings?.google_ads_sync_enabled) && (isOwner ? cfg.syncEnabled : true);
-  const workerConfigured = Boolean(process.env.CRON_SECRET?.trim() && process.env.SUPABASE_SERVICE_ROLE_KEY?.trim());
+  const workerDatabaseError = workerDatabaseConfigurationError();
+  const workerConfigured = Boolean(process.env.CRON_SECRET?.trim()) && !workerDatabaseError;
 
   const filtered = searchParams.status ? conv.filter((c) => c.status === searchParams.status) : conv;
 
@@ -212,7 +214,7 @@ export default async function GoogleAdsPage({
         </p>
         {isOwner && !workerConfigured && <p className="note" style={{ color: "var(--bad)" }}>
           Automatic uploads need server configuration: {!process.env.CRON_SECRET?.trim() ? "cron authentication " : ""}
-          {!process.env.SUPABASE_SERVICE_ROLE_KEY?.trim() ? "database worker credentials" : ""}.
+          {workerDatabaseError ?? ""}
         </p>}
       </Card>
 

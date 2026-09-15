@@ -11,7 +11,7 @@
  */
 
 import { NextResponse } from "next/server";
-import { serviceClient, processQueue, backfillMissingConversions, refreshConversionStatuses } from "@/lib/conversions";
+import { serviceClient, processQueue, backfillMissingConversions, refreshConversionStatuses, workerDatabaseConfigurationError } from "@/lib/conversions";
 import { prepareGoogleAdsRuntime } from "@/lib/google-ads-runtime";
 
 export const dynamic = "force-dynamic";
@@ -28,6 +28,8 @@ function authorised(req: Request, key: "CONVERSION_SYNC_SECRET" | "CRON_SECRET")
 
 async function run(req: Request) {
   const startedAt = Date.now();
+  const configurationError = workerDatabaseConfigurationError();
+  if (configurationError) return NextResponse.json({ error: configurationError }, { status: 503 });
   const supabase = serviceClient();
   if (!supabase) {
     return NextResponse.json({ error: "Server credentials are not configured." }, { status: 503 });
