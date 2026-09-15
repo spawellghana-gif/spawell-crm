@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { supabaseServer } from "@/lib/supabase/server";
 import { Card, Field } from "@/components/ui";
+import { BrandLogo } from "@/components/brand-logo";
 
 export const metadata = { title: "Sign in · SpaWell CRM" };
 
@@ -21,8 +22,8 @@ export default function LoginPage({
     <main className="login">
       <Card>
         <div style={{ marginBottom: 14 }}>
-          <div className="row" style={{ gap: 10 }}>
-            <span className="mark">SW</span>
+          <div className="login-brand">
+            <BrandLogo />
             <div>
               <h1 style={{ fontSize: 17 }}>SpaWell CRM</h1>
               <div className="note">SpaWellGhana · Accra</div>

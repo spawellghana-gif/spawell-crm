@@ -1,5 +1,6 @@
 "use client";
 import Link from "next/link";
+import { BrandLogo } from "@/components/brand-logo";
 import { usePathname } from "next/navigation";
 import type { AppRole } from "@/lib/types";
 
@@ -49,7 +50,7 @@ export function Rail({ role, name }: { role: AppRole; name: string }) {
   return (
     <nav className="rail" aria-label="Main">
       <div className="brand">
-        <span className="mark">SW</span>
+        <Link href="/" aria-label="SpaWell Ghana dashboard"><BrandLogo /></Link>
         <div>
           <h1>SpaWell CRM</h1>
           <small>Accra operations</small>
