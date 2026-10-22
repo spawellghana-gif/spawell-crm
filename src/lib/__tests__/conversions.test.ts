@@ -37,6 +37,17 @@ describe("attribution tokens", () => {
     expect(extractToken("k7qp2m")).toBe("K7QP2M");
   });
 
+  it("reads the CRM ref, not the website plugin's Reference line", () => {
+    const msg = "Hello SpaWellGhana, I would like to book a massage. [ref: K7QP2M]\n\nReference: SW-4MLDYRE";
+    expect(extractToken(msg)).toBe("K7QP2M");
+    expect(extractToken("Reference: SW-4MLDYRE [ref: K7QP2M]")).toBe("K7QP2M");
+  });
+
+  it("does not turn the word Reference into a token", () => {
+    expect(extractToken("Hello SpaWellGhana, I would like to book a massage.\n\nReference: SW-4MLDYRE")).toBe("");
+    expect(extractToken("Reference: SW-4MLDYRE")).toBe("");
+  });
+
   it("returns nothing rather than guessing from an unrelated message", () => {
     expect(extractToken("Do you have availability Saturday?")).toBe("");
     expect(extractToken("")).toBe("");

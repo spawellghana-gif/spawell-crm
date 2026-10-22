@@ -42,10 +42,18 @@ export function mintToken(random: () => number = Math.random): string {
   return out;
 }
 
-/** Pull "[ref: K7QP2M]", "ref K7QP2M" or a bare token out of a pasted message. */
+/**
+ * Pull "[ref: K7QP2M]", "ref K7QP2M" or a bare token out of a pasted message.
+ *
+ * The bracketed form wins, and "ref" must be a whole word: the website's
+ * WhatsApp plugin adds its own "Reference: SW-XXXXXXX" line, and a loose match
+ * used to read the letters of "Reference" ("ERENCE") as a token.
+ */
 export function extractToken(text: string): string {
   if (!text) return "";
-  const tagged = text.match(/ref\s*[:\-]?\s*([A-HJ-NP-Z2-9]{6})/i);
+  const bracketed = text.match(/\[\s*ref\s*[:\-]?\s*([A-HJ-NP-Z2-9]{6})\s*\]/i);
+  if (bracketed) return bracketed[1].toUpperCase();
+  const tagged = text.match(/\bref\b\s*[:\-]?\s*([A-HJ-NP-Z2-9]{6})(?![A-Z0-9])/i);
   if (tagged) return tagged[1].toUpperCase();
   const bare = text.trim().match(/^([A-HJ-NP-Z2-9]{6})$/i);
   return bare ? bare[1].toUpperCase() : "";
