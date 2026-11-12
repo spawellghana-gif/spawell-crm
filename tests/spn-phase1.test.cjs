@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const sql = fs.readFileSync(path.join(__dirname,'../supabase/migrations/0006_spn_phase1.sql'),'utf8');
+const sql = fs.readFileSync(path.join(__dirname,'../supabase/migrations/20261112190000_spn_phase1.sql'),'utf8');
 test('phase 1 is additive and preserves existing booking and payment tables',()=>{
  assert.match(sql,/alter table public\.partner add column if not exists partner_code/);
  assert.doesNotMatch(sql,/\bdrop table\b|\btruncate\b|\bdelete from\b/i);
