@@ -12,7 +12,7 @@ Status: review branch only. Do not deploy or run migration on production before 
 - `app_user`: owner/officer/therapist roles.
 
 ## Additive migration
-`0006_spn_phase1.sql` adds optional partner codes and approval metadata, a referral-claim table, and a future commission transaction ledger. No legacy data is rewritten or backfilled. Partner codes for historical rows remain null until reviewed.
+`20261112190000_spn_phase1.sql` adds optional partner codes and approval metadata, a referral-claim table, and a future commission transaction ledger. No legacy data is rewritten or backfilled. Partner codes for historical rows remain null until reviewed.
 
 ## Model A rules
 1. Only staff may capture and link referrals. Partners do not confirm bookings.
